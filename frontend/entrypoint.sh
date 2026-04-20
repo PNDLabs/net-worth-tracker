@@ -6,6 +6,6 @@ set -e
 
 # Generate the htpasswd file from env vars at container start so credentials
 # are never baked into the image.
-htpasswd -bc /etc/nginx/.htpasswd "$BASIC_AUTH_USER" "$BASIC_AUTH_PASS"
+printf '%s' "$BASIC_AUTH_PASS" | htpasswd -ic /etc/nginx/.htpasswd "$BASIC_AUTH_USER"
 
 exec nginx -g "daemon off;"

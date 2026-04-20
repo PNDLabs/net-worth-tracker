@@ -25,3 +25,4 @@ services:
 
 volumes:
   data:
+    name: net-worth-tracker_data
