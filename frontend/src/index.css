@@ -1,0 +1,311 @@
+/* ─── CSS Variables ─────────────────────────────────────────────────────── */
+:root {
+  --color-bg: #f0f2f5;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8f9fa;
+  --color-border: #e1e4e8;
+  --color-text: #24292e;
+  --color-text-muted: #6a737d;
+  --color-primary: #0366d6;
+  --color-primary-hover: #0256bf;
+  --color-success: #28a745;
+  --color-danger: #d73a49;
+  --color-warning: #f66a0a;
+  --color-asset: #28a745;
+  --color-liability: #d73a49;
+  --color-net: #0366d6;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --transition: 0.15s ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  transition: background var(--transition), opacity var(--transition);
+}
+button:disabled { opacity: 0.6; cursor: default; }
+
+/* ─── Layout ─────────────────────────────────────────────────────────────── */
+.app-layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-logo {
+  padding: 0 20px 24px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+.sidebar-logo h1 { font-size: 16px; font-weight: 700; color: var(--color-primary); }
+.sidebar-logo p { font-size: 11px; color: var(--color-text-muted); }
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  color: var(--color-text);
+  font-weight: 500;
+  transition: background var(--transition), color var(--transition);
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-size: 14px;
+  width: 100%;
+  text-align: left;
+}
+.nav-item:hover { background: var(--color-bg); }
+.nav-item.active { background: #e8f0fe; color: var(--color-primary); }
+.nav-item .icon { font-size: 16px; }
+
+.main-content {
+  flex: 1;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+/* ─── Page Header ────────────────────────────────────────────────────────── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.page-header h2 { font-size: 22px; font-weight: 700; }
+
+/* ─── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card { text-align: center; padding: 24px 20px; }
+.stat-card .label { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--color-text-muted); margin-bottom: 8px; }
+.stat-card .value { font-size: 28px; font-weight: 700; }
+.stat-card.assets .value { color: var(--color-asset); }
+.stat-card.liabilities .value { color: var(--color-liability); }
+.stat-card.net .value { color: var(--color-net); }
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+.table-container { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--color-text-muted); padding: 10px 12px; text-align: left; border-bottom: 2px solid var(--color-border); font-weight: 600; white-space: nowrap; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+tr:hover td { background: var(--color-surface-2); }
+.amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+.positive { color: var(--color-success); }
+.negative { color: var(--color-danger); }
+
+/* ─── Badges ─────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.badge-checking  { background: #e3f2fd; color: #1565c0; }
+.badge-savings   { background: #e8f5e9; color: #2e7d32; }
+.badge-brokerage { background: #f3e5f5; color: #6a1b9a; }
+.badge-401k      { background: #fff3e0; color: #e65100; }
+.badge-ira       { background: #fce4ec; color: #880e4f; }
+.badge-other     { background: #eceff1; color: #37474f; }
+.badge-real_estate { background: #e8eaf6; color: #283593; }
+.badge-vehicle   { background: #e0f2f1; color: #00695c; }
+.badge-crypto    { background: #fff8e1; color: #f57f17; }
+.badge-mortgage  { background: #fce4ec; color: #b71c1c; }
+.badge-auto      { background: #f3e5f5; color: #4a148c; }
+.badge-credit_card { background: #ffebee; color: #c62828; }
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.btn-primary { background: var(--color-primary); color: #fff; }
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-danger  { background: var(--color-danger); color: #fff; }
+.btn-danger:hover { background: #b5212c; }
+.btn-ghost   { background: transparent; border: 1px solid var(--color-border); color: var(--color-text); }
+.btn-ghost:hover { background: var(--color-surface-2); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* ─── Forms ──────────────────────────────────────────────────────────────── */
+.form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px; }
+
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group label { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.form-group input,
+.form-group select,
+.form-group textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: border-color var(--transition);
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* ─── Modal ──────────────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 16px;
+}
+.modal {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.2);
+}
+.modal h3 { font-size: 18px; margin-bottom: 20px; font-weight: 700; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+/* ─── Misc ───────────────────────────────────────────────────────────────── */
+.empty-state { text-align: center; padding: 48px 24px; color: var(--color-text-muted); }
+.empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+.empty-state p { font-size: 15px; }
+
+.error-msg { background: #ffeef0; border: 1px solid #ffd7dc; border-radius: var(--radius); padding: 10px 14px; color: var(--color-danger); font-size: 13px; margin-bottom: 16px; }
+.success-msg { background: #e6ffed; border: 1px solid #a4d5a9; border-radius: var(--radius); padding: 10px 14px; color: var(--color-success); font-size: 13px; margin-bottom: 16px; }
+
+.spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-center { display: flex; justify-content: center; padding: 48px; }
+
+.section-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+.mb-4 { margin-bottom: 16px; }
+.mt-4 { margin-top: 16px; }
+.flex-gap { display: flex; gap: 8px; align-items: center; }
+
+/* ─── Mobile Responsive ──────────────────────────────────────────────────── */
+
+/* Hamburger toggle button – hidden on desktop */
+.sidebar-toggle {
+  display: none;
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 1100;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Mobile sidebar overlay */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 1050;
+}
+
+@media (max-width: 768px) {
+  /* Show the hamburger */
+  .sidebar-toggle { display: flex; }
+
+  /* Push main content down so it doesn't go under the toggle */
+  .main-content {
+    padding: 64px 16px 24px;
+  }
+
+  /* Sidebar slides in as an overlay on mobile */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    z-index: 1060;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    width: 240px;
+    min-width: 240px;
+    box-shadow: 4px 0 20px rgba(0,0,0,.15);
+  }
+  .sidebar.open { transform: translateX(0); }
+
+  /* Show overlay when sidebar is open */
+  .sidebar-overlay.open { display: block; }
+
+  /* Stack Import page side-by-side panels vertically */
+  .import-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Ensure tables scroll horizontally */
+  .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Stat cards: smaller font on mobile */
+  .stat-card .value { font-size: 22px; }
+
+  /* Chart containers shouldn't overflow */
+  .recharts-responsive-container { min-width: 0; }
+
+  /* Progress bars in liabilities fit on one line */
+  .progress-bar-container { min-width: 60px; }
+}
+
+@media (max-width: 480px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .modal { padding: 20px 16px; }
+  .form-row { grid-template-columns: 1fr; }
+  .card-grid { grid-template-columns: 1fr; }
+}
+
