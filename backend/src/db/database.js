@@ -79,6 +79,23 @@ function runMigrations(db) {
       notes             TEXT,
       created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS insurance_plans (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      name               TEXT    NOT NULL,
+      provider           TEXT,
+      type               TEXT    NOT NULL DEFAULT 'other',
+      policy_number      TEXT,
+      premium_amount     REAL,
+      premium_frequency  TEXT    NOT NULL DEFAULT 'monthly',
+      coverage_amount    REAL,
+      start_date         TEXT,
+      end_date           TEXT,
+      renewal_date       TEXT,
+      notes              TEXT,
+      created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
 

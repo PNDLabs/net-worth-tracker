@@ -7,6 +7,7 @@ const assetsRouter = require('./routes/assets');
 const liabilitiesRouter = require('./routes/liabilities');
 const networthRouter = require('./routes/networth');
 const importRouter = require('./routes/importRoutes');
+const insuranceRouter = require('./routes/insurance');
 
 // Standard limiter: 300 requests per minute for read/write endpoints
 const apiLimiter = rateLimit({
@@ -36,10 +37,18 @@ function createApp() {
   app.use('/api/assets', apiLimiter, assetsRouter);
   app.use('/api/liabilities', apiLimiter, liabilitiesRouter);
   app.use('/api/networth', apiLimiter, networthRouter);
+  app.use('/api/insurance', apiLimiter, insuranceRouter);
   app.use('/api/import', importLimiter, importRouter);
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+  // Server configuration (AI key availability, etc.)
+  app.get('/api/config', (req, res) => {
+    res.json({
+      aiEnabled: !!(process.env.AI_API_KEY || process.env.OPENAI_API_KEY),
+    });
+  });
 
   // 404 handler
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
