@@ -55,4 +55,35 @@ export const api = {
     }
     return res.json();
   },
+
+  previewPdf: async (file, password, aiApiKey) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (password) formData.append('password', password);
+    if (aiApiKey) formData.append('ai_api_key', aiApiKey);
+    const res = await fetch(`${API_BASE}/import/pdf/preview`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body.error || `Request failed: ${res.status}`);
+      err.code = body.code;
+      throw err;
+    }
+    return res.json();
+  },
+
+  importPdf: async (file, password, aiApiKey, importType) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (password) formData.append('password', password);
+    if (aiApiKey) formData.append('ai_api_key', aiApiKey);
+    if (importType) formData.append('import_type', importType);
+    const res = await fetch(`${API_BASE}/import/pdf`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body.error || `Request failed: ${res.status}`);
+      err.code = body.code;
+      throw err;
+    }
+    return res.json();
+  },
 };

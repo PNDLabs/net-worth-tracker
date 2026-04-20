@@ -27,13 +27,34 @@ const PAGES = {
 export default function App() {
   const [page, setPage] = useState('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const refresh = () => setRefreshKey((k) => k + 1);
   const PageComponent = PAGES[page];
 
+  const navigate = (id) => {
+    setPage(id);
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="app-layout">
-      <aside className="sidebar">
+      {/* Hamburger toggle (visible on mobile only) */}
+      <button
+        className="sidebar-toggle"
+        aria-label="Open navigation menu"
+        onClick={() => setSidebarOpen((o) => !o)}
+      >
+        {sidebarOpen ? '✕' : '☰'}
+      </button>
+
+      {/* Overlay that closes sidebar on tap */}
+      <div
+        className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sidebar-logo">
           <h1>💰 NetWorth</h1>
           <p>Personal Finance Tracker</p>
@@ -43,7 +64,7 @@ export default function App() {
             <button
               key={item.id}
               className={`nav-item${page === item.id ? ' active' : ''}`}
-              onClick={() => setPage(item.id)}
+              onClick={() => navigate(item.id)}
             >
               <span className="icon">{item.icon}</span>
               {item.label}
@@ -51,8 +72,9 @@ export default function App() {
           ))}
         </nav>
       </aside>
+
       <main className="main-content">
-        <PageComponent key={refreshKey} onRefresh={refresh} navigate={setPage} />
+        <PageComponent key={refreshKey} onRefresh={refresh} navigate={navigate} />
       </main>
     </div>
   );

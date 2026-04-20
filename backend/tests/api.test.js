@@ -333,3 +333,81 @@ describe('Health endpoint', () => {
     expect(res.body.status).toBe('ok');
   });
 });
+
+// ─── PDF Import ───────────────────────────────────────────────────────────────
+
+/**
+ * Generate a minimal valid PDF containing the given text.
+ * No external tools needed – hand-crafted PDF structure.
+ */
+function makePdf(text) {
+  const safeText = text.replace(/[()\\]/g, '\\$&');
+  const streamContent = `BT /F1 12 Tf 50 750 Td (${safeText}) Tj ET`;
+  const streamLen = streamContent.length;
+  const obj1 = '1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n';
+  const obj2 = '2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n';
+  const obj3 = `3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources <</Font <</F1 5 0 R>>>>>>\nendobj\n`;
+  const obj4 = `4 0 obj\n<</Length ${streamLen}>>\nstream\n${streamContent}\nendstream\nendobj\n`;
+  const obj5 = '5 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n';
+  const header = '%PDF-1.4\n';
+  const body = [obj1, obj2, obj3, obj4, obj5];
+  let offset = header.length;
+  const offsets = [];
+  const bodyStr = body.map((o) => { offsets.push(offset); offset += o.length; return o; }).join('');
+  const xrefOffset = header.length + bodyStr.length;
+  const xref = `xref\n0 6\n0000000000 65535 f \n${offsets.map((o) => o.toString().padStart(10, '0') + ' 00000 n ').join('\n')}\n`;
+  const trailer = `trailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(header + bodyStr + xref + trailer, 'latin1');
+}
+
+describe('PDF Import API', () => {
+  test('POST /api/import/pdf/preview - parses bank statement PDF', async () => {
+    const pdfBuf = makePdf('Chase Bank  Ending Balance: $12,345.67  Checking Account');
+    const res = await request(app)
+      .post('/api/import/pdf/preview')
+      .attach('file', pdfBuf, { filename: 'statement.pdf', contentType: 'application/pdf' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.import_type).toBe('accounts');
+    expect(Array.isArray(res.body.records)).toBe(true);
+    expect(res.body.records.length).toBeGreaterThan(0);
+    expect(res.body.records[0].balance).toBeCloseTo(12345.67, 0);
+    expect(res.body.method).toBe('pattern');
+  });
+
+  test('POST /api/import/pdf/preview - parses loan statement PDF', async () => {
+    const pdfBuf = makePdf('Wells Fargo Mortgage  Outstanding Balance: $320,000.00  Interest Rate: 4.50%');
+    const res = await request(app)
+      .post('/api/import/pdf/preview')
+      .attach('file', pdfBuf, { filename: 'mortgage.pdf', contentType: 'application/pdf' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.import_type).toBe('liabilities');
+    expect(res.body.records[0].current_balance).toBeCloseTo(320000, 0);
+    expect(res.body.records[0].interest_rate).toBeCloseTo(4.5, 1);
+  });
+
+  test('POST /api/import/pdf/preview - rejects missing file', async () => {
+    const res = await request(app).post('/api/import/pdf/preview');
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/import/pdf - imports accounts from PDF into DB', async () => {
+    const pdfBuf = makePdf('Chase Bank  Ending Balance: $5,000.00  Savings Account');
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', pdfBuf, { filename: 'savings.pdf', contentType: 'application/pdf' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBeGreaterThan(0);
+
+    const list = await request(app).get('/api/accounts');
+    expect(list.body.length).toBeGreaterThan(0);
+  });
+
+  test('POST /api/import/pdf - rejects missing file', async () => {
+    const res = await request(app).post('/api/import/pdf');
+    expect(res.status).toBe(400);
+  });
+});
+
