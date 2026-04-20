@@ -22,7 +22,51 @@ A full-stack web application to track your personal net worth across all financi
 | Testing | Jest + Supertest |
 | CSV parsing | csv-parse |
 
-## Quick Start
+## Docker Compose (recommended for local hosting)
+
+This is the recommended way to run the app locally. Everything runs in Docker:
+the backend API, the React frontend, and an **nginx reverse proxy that enforces
+HTTP Basic Auth** so your financial data is never exposed without a password.
+
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (bundled with Docker Desktop).
+
+### 1. Create your `.env` file
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and set a strong password:
+
+```
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=your-strong-password-here
+```
+
+### 2. Build and start
+
+```bash
+docker compose up --build -d
+```
+
+Open **http://localhost** in your browser. You will be prompted for the
+username and password you set above.
+
+Your data is stored in a named Docker volume (`net-worth-tracker_data`) so it
+persists across restarts and rebuilds.
+
+### 3. Stop / restart
+
+```bash
+docker compose down          # stop containers (data is kept)
+docker compose down -v       # stop and DELETE all data
+docker compose restart       # restart without rebuilding
+docker compose up --build -d # rebuild images and restart
+```
+
+---
+
+## Manual Quick Start (development)
 
 **Prerequisites:** Node.js 18+
 

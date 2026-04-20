@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    # Port 3001 is intentionally NOT exposed to the host; only nginx can reach it
+    # via the internal Docker network, keeping the API private.
+    volumes:
+      - data:/app/data
+    env_file:
+      - .env
+    environment:
+      PORT: "3001"
+      DB_DIR: /app/data
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      BASIC_AUTH_USER: "${BASIC_AUTH_USER}"
+      BASIC_AUTH_PASS: "${BASIC_AUTH_PASS}"
+    depends_on:
+      - backend
+
+volumes:
+  data:
