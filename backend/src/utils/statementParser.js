@@ -470,20 +470,26 @@ function parseCasStatement(text) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
 
-    // Match "Closing Balance" line in tabular form:  units  nav  market_value
-    const closingTabMatch = line.match(
-      /closing[ \t]+balance[: \t]{0,5}([\d,]+(?:\.\d{1,4})?)[ \t]+([\d,]+(?:\.\d{1,4})?)[ \t]+(?:Rs\.?|₹|INR)?[ \t]*([\d,]+(?:\.\d{1,2})?)/i
-    );
-    // Match "units @ nav = value" form
-    const closingAtMatch = !closingTabMatch && line.match(
-      /closing[ \t]+balance[^=]{0,50}([\d,]+(?:\.\d{1,4})?)[ \t]*units?[ \t]*@[ \t]*(?:Rs\.?|₹|INR)?[ \t]*([\d,]+(?:\.\d{1,4})?)[ \t]*=[ \t]*(?:Rs\.?|₹|INR)?[ \t]*([\d,]+(?:\.\d{1,2})?)/i
-    );
+    // Only process lines that begin with "Closing Balance"
+    if (!/^closing\s+balance/i.test(line)) continue;
 
-    const closingMatch = closingTabMatch || closingAtMatch;
-    if (!closingMatch) continue;
+    // Extract all numbers from the line; the last (rightmost) is the market value,
+    // the second-to-last is the NAV, and the first is the unit count.
+    // Handles formats: "Closing Balance: 110.234  490.00  54,014.66"
+    //                  "Closing Balance  110.234 units @ Rs. 490.00 = Rs. 54,014.66"
+    const nums = [];
+    const numRe = /[\d,]+(?:\.\d+)?/g;
+    let nm;
+    while ((nm = numRe.exec(line)) !== null) {
+      const val = parseFloat(nm[0].replace(/,/g, ''));
+      if (!isNaN(val)) nums.push(val);
+    }
 
-    const marketValue = parseFloat(closingMatch[3].replace(/,/g, ''));
-    if (!marketValue || marketValue <= 0) continue;
+    // Need at least one number (the market value); largest single value is safest proxy
+    // if only one number found.  With three numbers: [units, nav, marketValue].
+    if (nums.length === 0) continue;
+    const marketValue = nums[nums.length - 1];
+    if (marketValue <= 0) continue;
 
     // Look backwards (up to 25 lines) to find the scheme name and AMC name
     let schemeName = null;
@@ -505,7 +511,7 @@ function parseCasStatement(text) {
       if (!schemeName &&
           /\b(?:fund|growth|dividend|direct|regular|plan|scheme)\b/i.test(prev) &&
           prev.length > 8) {
-        schemeName = prev.replace(/\s*\(ISIN[^)]{0,60}\)/gi, '').replace(/\s+/g, ' ').trim();
+        schemeName = prev.replace(/\s*\(ISIN[^)]{0,20}\)/gi, '').replace(/\s+/g, ' ').trim();
       }
 
       if (schemeName && amcName) break;
