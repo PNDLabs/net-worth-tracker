@@ -51,6 +51,21 @@ export const api = {
   getSnapshots: () => apiFetch('/networth/snapshots'),
   createSnapshot: (data) => apiFetch('/networth/snapshots', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Value History
+  getValueHistory: (entityType, entityId) => apiFetch(`/value-history?entity_type=${entityType}&entity_id=${entityId}`),
+  getValueGrowth: (entityType, entityId) => apiFetch(`/value-history/growth?entity_type=${entityType}&entity_id=${entityId}`),
+  recordValue: (data) => apiFetch('/value-history', { method: 'POST', body: JSON.stringify(data) }),
+
+  // SIP Installments
+  getSipInstallments: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return apiFetch(`/sip${qs ? '?' + qs : ''}`);
+  },
+  getSipSummary: () => apiFetch('/sip/summary'),
+  createSipInstallment: (data) => apiFetch('/sip', { method: 'POST', body: JSON.stringify(data) }),
+  updateSipInstallment: (id, data) => apiFetch(`/sip/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSipInstallment: (id) => apiFetch(`/sip/${id}`, { method: 'DELETE' }),
+
   // Import
   importJson: (importType, records) =>
     apiFetch('/import/json', { method: 'POST', body: JSON.stringify({ import_type: importType, records }) }),

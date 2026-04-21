@@ -6,6 +6,38 @@ const db = require('../db/database');
 const { extractPdfText } = require('../utils/pdfExtractor');
 const { parseStatement } = require('../utils/statementParser');
 
+class DuplicateError extends Error {}
+
+/**
+ * Returns true when a row with the same natural key already exists in the DB.
+ * SIP installments are never deduplicated (each payment is a unique event).
+ * @param {object} conn - better-sqlite3 connection
+ * @param {string} importType - 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {object} row - record with at least { name, institution?, lender?, provider? }
+ */
+function isDuplicateRecord(conn, importType, row) {
+  const name = String(row.name || '');
+  if (importType === 'accounts') {
+    return !!conn.prepare(
+      `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+    ).get(name, row.institution ? String(row.institution) : null);
+  }
+  if (importType === 'assets') {
+    return !!conn.prepare(`SELECT id FROM assets WHERE lower(name) = lower(?)`).get(name);
+  }
+  if (importType === 'liabilities') {
+    return !!conn.prepare(
+      `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+    ).get(name, row.lender ? String(row.lender) : null);
+  }
+  if (importType === 'insurance') {
+    return !!conn.prepare(
+      `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
+    ).get(name, row.provider ? String(row.provider) : null);
+  }
+  return false;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB (PDFs can be larger than CSVs)
@@ -26,7 +58,7 @@ const upload = multer({
  *   ?import_type=assets
  *   ?import_type=liabilities
  */
-const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance'];
+const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance', 'sip'];
 
 router.post('/csv', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -63,8 +95,12 @@ router.post('/csv', upload.single('file'), (req, res) => {
     return out;
   };
 
+  const isDuplicate = (row) => isDuplicateRecord(conn, importType, row);
+
   const importRow = conn.transaction((record) => {
     const row = normalizeKeys(record);
+
+    if (isDuplicate(row)) throw new DuplicateError('Duplicate entry skipped');
 
     if (importType === 'accounts') {
       const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
@@ -118,6 +154,24 @@ router.post('/csv', upload.single('file'), (req, res) => {
         renewal_date ? String(renewal_date) : null,
         notes ? String(notes) : null
       );
+
+    } else if (importType === 'sip') {
+      const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+      if (!name) throw new Error('name is required');
+      if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+      conn.prepare(
+        `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        String(name),
+        symbol ? String(symbol) : null,
+        account_id ? Number(account_id) : null,
+        Number(amount),
+        units != null ? Number(units) : null,
+        nav != null ? Number(nav) : null,
+        installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
+        notes ? String(notes) : null
+      );
     }
   });
 
@@ -127,7 +181,9 @@ router.post('/csv', upload.single('file'), (req, res) => {
       results.imported++;
     } catch (err) {
       results.skipped++;
-      results.errors.push({ row: i + 2, message: err.message });
+      if (!(err instanceof DuplicateError)) {
+        results.errors.push({ row: i + 2, message: err.message });
+      }
     }
   }
 
@@ -152,9 +208,13 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   const conn = db.getDb();
   const results = { imported: 0, skipped: 0, errors: [] };
 
+  const isDuplicateJson = (row) => isDuplicateRecord(conn, importType, row);
+
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
+      if (isDuplicateJson(row)) { results.skipped++; continue; }
+
       if (importType === 'accounts') {
         const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
         if (!name) throw new Error('name is required');
@@ -201,6 +261,23 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           start_date ? String(start_date) : null,
           end_date ? String(end_date) : null,
           renewal_date ? String(renewal_date) : null,
+          notes ? String(notes) : null
+        );
+
+      } else if (importType === 'sip') {
+        const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+        if (!name) throw new Error('name is required');
+        if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+        conn.prepare(
+          `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          String(name),
+          symbol ? String(symbol) : null,
+          account_id ? Number(account_id) : null,
+          Number(amount),
+          units != null ? Number(units) : null,
+          nav != null ? Number(nav) : null,
+          installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
           notes ? String(notes) : null
         );
       }
@@ -291,9 +368,13 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     const conn = db.getDb();
     const results = { imported: 0, skipped: 0, errors: [], method: parsed.method };
 
+    const isDuplicatePdf = (row) => isDuplicateRecord(conn, importType, row);
+
     for (let i = 0; i < parsed.records.length; i++) {
       const row = parsed.records[i];
       try {
+        if (isDuplicatePdf(row)) { results.skipped++; continue; }
+
         if (importType === 'accounts') {
           const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
           if (!name) throw new Error('name is required');
@@ -337,6 +418,22 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             start_date ? String(start_date) : null,
             end_date ? String(end_date) : null,
             renewal_date ? String(renewal_date) : null,
+            notes ? String(notes) : null
+          );
+        } else if (importType === 'sip') {
+          const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+          if (!name) throw new Error('name is required');
+          if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+          conn.prepare(
+            `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            String(name),
+            symbol ? String(symbol) : null,
+            account_id ? Number(account_id) : null,
+            Number(amount),
+            units != null ? Number(units) : null,
+            nav != null ? Number(nav) : null,
+            installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
             notes ? String(notes) : null
           );
         }

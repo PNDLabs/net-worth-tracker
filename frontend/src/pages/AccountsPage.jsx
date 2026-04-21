@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
-import { formatCurrency, typeLabel } from '../hooks/format';
+import { formatCurrency, formatDate, typeLabel } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
 
@@ -19,7 +20,10 @@ export default function AccountsPage() {
   const [showHoldingModal, setShowHoldingModal] = useState(false);
   const [holdingForm, setHoldingForm] = useState(EMPTY_HOLDING);
   const [holdingAccountId, setHoldingAccountId] = useState(null);
+  const [historyId, setHistoryId] = useState(null);
+  const [historyData, setHistoryData] = useState({});
   const { currency } = useCurrency();
+  const fmt = (v) => formatCurrency(v, currency);
 
   const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', notes: '' });
 
@@ -45,6 +49,18 @@ export default function AccountsPage() {
     if (!confirm('Delete this account?')) return;
     try { await api.deleteAccount(id); load(); }
     catch (e) { setError(e.message); }
+  }
+
+  async function toggleHistory(id) {
+    if (historyId === id) { setHistoryId(null); return; }
+    setHistoryId(id);
+    if (!historyData[id]) {
+      const [hist, growth] = await Promise.all([
+        api.getValueHistory('account', id).catch(() => []),
+        api.getValueGrowth('account', id).catch(() => null),
+      ]);
+      setHistoryData((prev) => ({ ...prev, [id]: { hist, growth } }));
+    }
   }
 
   async function toggleHoldings(id) {
@@ -105,12 +121,13 @@ export default function AccountsPage() {
                       <td>{acc.institution || '—'}</td>
                       <td><span className={`badge badge-${acc.type}`}>{typeLabel(acc.type)}</span></td>
                       <td>{acc.currency}</td>
-                      <td className="amount" style={{ textAlign: 'right' }}>{formatCurrency(acc.balance, acc.currency)}</td>
+                      <td className="amount" style={{ textAlign: 'right' }}>{fmt(acc.balance)}</td>
                       <td>
                         <div className="flex-gap">
                           <button className="btn-ghost btn-sm" onClick={() => openEdit(acc)}>Edit</button>
                           <button className="btn-danger btn-sm" onClick={() => remove(acc.id)}>Delete</button>
                           <button className="btn-ghost btn-sm" onClick={() => { setHoldingAccountId(acc.id); setHoldingForm(EMPTY_HOLDING); setShowHoldingModal(true); }}>+ Holding</button>
+                          <button className="btn-ghost btn-sm" onClick={() => toggleHistory(acc.id)}>📈 History</button>
                         </div>
                       </td>
                     </tr>
@@ -126,13 +143,54 @@ export default function AccountsPage() {
                                     <td><strong>{h.symbol}</strong></td>
                                     <td>{h.name || '—'}</td>
                                     <td>{h.shares}</td>
-                                    <td style={{ textAlign: 'right' }}>{h.current_price ? formatCurrency(h.current_price) : '—'}</td>
-                                    <td style={{ textAlign: 'right' }} className="amount positive">{formatCurrency(h.current_value || h.shares * (h.current_price || 0))}</td>
+                                    <td style={{ textAlign: 'right' }}>{h.current_price ? fmt(h.current_price) : '—'}</td>
+                                    <td style={{ textAlign: 'right' }} className="amount positive">{fmt(h.current_value || h.shares * (h.current_price || 0))}</td>
                                   </tr>
                                 ))}
                               </tbody>
                             </table>
                           ) : <p style={{ padding: '8px 0', color: 'var(--color-text-muted)' }}>No holdings. Click "+ Holding" to add investment positions.</p>}
+                        </td>
+                      </tr>
+                    )}
+                    {historyId === acc.id && (
+                      <tr key={`vh-${acc.id}`}>
+                        <td colSpan={6} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                          {(() => {
+                            const d = historyData[acc.id];
+                            if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
+                            const g = d.growth;
+                            return (
+                              <>
+                                {g && g.data_points > 0 && (
+                                  <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
+                                    <span>First: <strong>{fmt(g.first_value)}</strong> ({formatDate(g.first_date)})</span>
+                                    <span>Latest: <strong>{fmt(g.latest_value)}</strong> ({formatDate(g.latest_date)})</span>
+                                    <span style={{ color: g.absolute_change >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                      Change: <strong>{g.absolute_change >= 0 ? '+' : ''}{fmt(g.absolute_change)}</strong>
+                                      {g.percent_change != null && <> ({g.percent_change >= 0 ? '+' : ''}{g.percent_change}%)</>}
+                                    </span>
+                                    <span>Data points: <strong>{g.data_points}</strong></span>
+                                  </div>
+                                )}
+                                {d.hist.length > 1 ? (
+                                  <ResponsiveContainer width="100%" height={180}>
+                                    <LineChart data={d.hist} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                                      <XAxis dataKey="recorded_at" tick={{ fontSize: 10 }} />
+                                      <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 10 }} />
+                                      <Tooltip formatter={(v) => fmt(v)} />
+                                      <Line type="monotone" dataKey="value" name="Balance" stroke="#0366d6" strokeWidth={2} dot />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                ) : d.hist.length === 1 ? (
+                                  <p style={{ color: 'var(--color-text-muted)' }}>Only one data point recorded. Update the balance to see a trend.</p>
+                                ) : (
+                                  <p style={{ color: 'var(--color-text-muted)' }}>No history recorded yet.</p>
+                                )}
+                              </>
+                            );
+                          })()}
                         </td>
                       </tr>
                     )}

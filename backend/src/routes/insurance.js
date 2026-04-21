@@ -38,6 +38,11 @@ router.post('/', (req, res) => {
   }
 
   const conn = db.getDb();
+  const duplicate = conn.prepare(
+    `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
+  ).get(name, provider || null);
+  if (duplicate) return res.status(409).json({ error: 'An insurance plan with the same name and provider already exists' });
+
   const result = conn.prepare(
     `INSERT INTO insurance_plans
        (name, provider, type, policy_number, premium_amount, premium_frequency,

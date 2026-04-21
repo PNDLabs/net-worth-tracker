@@ -6,6 +6,7 @@ const IMPORT_TYPES = [
   { value: 'assets', label: 'Assets (real estate, vehicles, etc.)', icon: '🏠' },
   { value: 'liabilities', label: 'Liabilities (loans, credit cards, etc.)', icon: '💳' },
   { value: 'insurance', label: 'Insurance (policies, coverage)', icon: '🛡️' },
+  { value: 'sip', label: 'SIP Installments (mutual funds)', icon: '💰' },
 ];
 
 const CSV_TEMPLATES = {
@@ -25,6 +26,10 @@ Credit Card,Chase,credit_card,,3200,19.99,96`,
 Life Insurance,Prudential,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,
 Health Plan,BlueCross,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,
 Auto Insurance,State Farm,auto,AU-456,120,monthly,100000,2024-06-01,2025-06-01,,`,
+  sip: `name,symbol,amount,units,nav,installment_date,notes
+NIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP
+Axis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,
+HDFC Mid-Cap Opportunities SIP,,5000,,,2025-01-15,`,
 };
 
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
@@ -236,7 +241,8 @@ export default function ImportPage({ onRefresh }) {
             <div className="card mt-4">
               <div className="section-title">PDF Tips</div>
               <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
-                <li>Supports bank, investment, loan, and insurance statements</li>
+                <li>Supports bank, investment, loan, insurance, and <strong>SIP / mutual fund</strong> statements</li>
+                <li>SIP statements auto-detected from CAMS, KFintech, or similar AMC PDFs</li>
                 <li>Password-protected PDFs supported</li>
                 <li>Set <code>AI_API_KEY</code> in <code>.env</code> for best accuracy</li>
                 <li>Review the preview before importing</li>

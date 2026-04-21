@@ -26,6 +26,11 @@ router.post('/', (req, res) => {
   }
 
   const conn = db.getDb();
+  const duplicate = conn.prepare(
+    `SELECT id FROM assets WHERE lower(name) = lower(?)`
+  ).get(name);
+  if (duplicate) return res.status(409).json({ error: 'An asset with the same name already exists' });
+
   const result = conn.prepare(
     `INSERT INTO assets (name, category, acquisition_date, acquisition_cost, current_value, notes)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -36,6 +41,10 @@ router.post('/', (req, res) => {
   );
 
   const asset = conn.prepare('SELECT * FROM assets WHERE id = ?').get(result.lastInsertRowid);
+  conn.prepare(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('asset', ?, ?, date('now'), 'Initial value')`
+  ).run(asset.id, asset.current_value);
   res.status(201).json(asset);
 });
 
@@ -64,6 +73,13 @@ router.put('/:id', (req, res) => {
     updated.name, updated.category, updated.acquisition_date,
     updated.acquisition_cost, updated.current_value, updated.notes, req.params.id
   );
+
+  if (updated.current_value !== existing.current_value) {
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at)
+       VALUES ('asset', ?, ?, date('now'))`
+    ).run(req.params.id, updated.current_value);
+  }
 
   const asset = conn.prepare('SELECT * FROM assets WHERE id = ?').get(req.params.id);
   res.json(asset);

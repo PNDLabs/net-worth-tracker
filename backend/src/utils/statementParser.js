@@ -14,7 +14,7 @@
  *
  * Parsed output shape:
  *  {
- *    import_type : 'accounts' | 'assets' | 'liabilities',
+ *    import_type : 'accounts' | 'assets' | 'liabilities' | 'insurance' | 'sip',
  *    records     : Array<object>,
  *    method      : 'ai' | 'pattern',
  *    raw_preview : string   // first 2000 chars of extracted text
@@ -26,11 +26,11 @@
 // which fits well within gpt-4o-mini's 128k context while keeping costs low.
 const MAX_AI_INPUT_CHARS = 12000;
 
-const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, or any other financial record).
+const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, SIP/mutual fund transaction statement, or any other financial record).
 
 Your task is to identify the financial records in the text and return structured JSON in EXACTLY this format – no markdown fences, no prose, only the JSON object:
 {
-  "import_type": "<accounts|assets|liabilities|insurance>",
+  "import_type": "<accounts|assets|liabilities|insurance|sip>",
   "records": [ ... ]
 }
 
@@ -46,13 +46,17 @@ For "liabilities" records use:
 For "insurance" records use:
 { "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null }
 
+For "sip" records (SIP / mutual fund transaction statements) use:
+{ "name": string, "symbol": string|null, "amount": number, "units": number|null, "nav": number|null, "installment_date": "YYYY-MM-DD" }
+
 Rules:
 - Return ONLY the JSON, nothing else.
 - If you cannot identify any records, return {"import_type":"accounts","records":[]}.
 - Convert all monetary values to plain numbers (no $ signs or commas).
 - If a field is unknown, use null.
 - For investment/brokerage accounts include the total value as the balance.
-- Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.`;
+- Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
+- Choose "sip" as import_type when the document contains mutual fund SIP/systematic investment plan transactions with NAV and units data. Each transaction row becomes one record.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -99,10 +103,49 @@ async function parseWithAI(text, options = {}) {
 // ─── Pattern-based Fallback ───────────────────────────────────────────────────
 
 /**
+ * Normalize a date string to ISO YYYY-MM-DD.
+ * Handles:
+ *   YYYY-MM-DD      → pass-through
+ *   DD-MMM-YYYY     → 15-Jan-2025  (common in Indian fund / SIP statements)
+ *   DD-MMM-YY       → 15-Jan-25
+ *   MM/DD/YYYY      → US insurance format (when no month abbreviation)
+ *   MM-DD-YYYY      → same
+ */
+function normalizeDate(s) {
+  if (!s) return null;
+  s = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // DD-MMM-YYYY or DD-MMM-YY (e.g. 15-Jan-2025, 15-Jan-25)
+  const mmmMatch = s.match(/^(\d{1,2})[-\s/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s/](\d{2,4})$/i);
+  if (mmmMatch) {
+    const MONTHS = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    const year = mmmMatch[3].length === 2 ? `20${mmmMatch[3]}` : mmmMatch[3];
+    const month = MONTHS[mmmMatch[2].toLowerCase()];
+    return `${year}-${month}-${mmmMatch[1].padStart(2, '0')}`;
+  }
+  // MM/DD/YYYY, MM-DD-YYYY, MM/DD/YY, etc.
+  const parts = s.split(/[/-]/);
+  if (parts.length === 3) {
+    const [a, b, c] = parts;
+    const year = c.length === 2 ? `20${c}` : c;
+    return `${year}-${a.padStart(2, '0')}-${b.padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
  * Detect the dominant statement type from the full text.
  */
 function detectStatementType(text) {
   const lower = text.toLowerCase();
+
+  // Strong signals for SIP / mutual fund transaction statements
+  if (
+    /\bsystematic\s+investment\s+plan\b/.test(lower) ||
+    /\bsip\s*(?:purchase|installment|debit|transaction)\b/.test(lower) ||
+    (/\bfolio\b/.test(lower) && /\bnav\b/.test(lower)) ||
+    /\bunits\s+allotted\b/.test(lower)
+  ) return 'sip';
 
   // Strong signals for insurance
   if (
@@ -271,6 +314,63 @@ function parseLiabilityStatement(text) {
 }
 
 /**
+ * Parse a SIP / mutual fund transaction statement into sip_installments records.
+ * Handles both tabular format (one row per transaction) and key-value format
+ * (single transaction described inline).
+ */
+function parseSipStatement(text) {
+  const records = [];
+
+  // Extract scheme/fund name(s) from common header patterns
+  const schemeNames = [];
+  for (const m of text.matchAll(/scheme(?:\s+name)?[ \t:]+([A-Za-z0-9 \-&()/]+?)(?:\r?\n|ISIN|folio|\s{3,})/gi)) {
+    const name = m[1].trim();
+    if (name && !schemeNames.includes(name)) schemeNames.push(name);
+  }
+
+  // Pattern 1: tabular rows "date  SIP-Purchase  amount  units  nav"
+  // e.g. "15-Jan-2025  SIP Purchase  5,000.00  10.2341  488.80"
+  const tabRe = /(\d{1,2}[-/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(?:SIP[- ]?(?:Purchase|Installment|Debit)?|Purchase|Systematic Investment)\s*([\d,]+(?:\.\d{1,2})?)\s+([\d.]+)\s+([\d.]+)/gi;
+  let m;
+  let si = 0;
+  while ((m = tabRe.exec(text)) !== null) {
+    const schemeName = schemeNames[si] || schemeNames[0] || 'SIP';
+    records.push({
+      name: schemeName,
+      symbol: null,
+      amount: parseFloat(m[2].replace(/,/g, '')),
+      units: parseFloat(m[3]),
+      nav: parseFloat(m[4]),
+      installment_date: normalizeDate(m[1]) || new Date().toISOString().slice(0, 10),
+    });
+    si++;
+  }
+
+  // Pattern 2: key-value format (single or sparse transaction)
+  // e.g. "Amount: 5000  Units: 26.286  NAV: 190.25  Date: 15-Jan-2025"
+  if (records.length === 0) {
+    const amtMatch = text.match(/(?:amount|invested)[ \t:]+(?:Rs\.?|₹|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i);
+    const unitsMatch = text.match(/units?(?:\s+allotted|\s+purchased)?[ \t:]+\s*([\d.]+)/i);
+    const navMatch = text.match(/\bNAV[ \t:]+(?:Rs\.?|₹|INR)?\s*([\d.]+)/i);
+    const dateMatch = text.match(
+      /(?:transaction\s+date|sip\s+date|date)[ \t:]+(\d{1,2}[-/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})/i
+    );
+    if (amtMatch) {
+      records.push({
+        name: schemeNames[0] || 'SIP',
+        symbol: null,
+        amount: parseFloat(amtMatch[1].replace(/,/g, '')),
+        units: unitsMatch ? parseFloat(unitsMatch[1]) : null,
+        nav: navMatch ? parseFloat(navMatch[1]) : null,
+        installment_date: (dateMatch && normalizeDate(dateMatch[1])) || new Date().toISOString().slice(0, 10),
+      });
+    }
+  }
+
+  return { import_type: 'sip', records };
+}
+
+/**
  * Parse an insurance document into insurance plan records.
  */
 function parseInsuranceDocument(text) {
@@ -313,16 +413,6 @@ function parseInsuranceDocument(text) {
   else if (/\bpet\b/.test(lowerText)) type = 'pet';
   else if (/\bumbrella\b/.test(lowerText)) type = 'umbrella';
   else if (/\bbusiness\b/.test(lowerText)) type = 'business';
-
-  const normalizeDate = (s) => {
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    const parts = s.split(/[\/\-]/);
-    if (parts.length !== 3) return null;
-    const [m, d, y] = parts;
-    const year = y.length === 2 ? `20${y}` : y;
-    return `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  };
 
   const record = {
     name,
@@ -368,11 +458,13 @@ async function parseStatement(text, options = {}) {
   // Pattern-based fallback
   const stmtType = detectStatementType(text);
   const result =
-    stmtType === 'liabilities'
-      ? parseLiabilityStatement(text)
-      : stmtType === 'insurance'
-        ? parseInsuranceDocument(text)
-        : parseBankStatement(text);
+    stmtType === 'sip'
+      ? parseSipStatement(text)
+      : stmtType === 'liabilities'
+        ? parseLiabilityStatement(text)
+        : stmtType === 'insurance'
+          ? parseInsuranceDocument(text)
+          : parseBankStatement(text);
 
   return { ...result, method: 'pattern', raw_preview };
 }

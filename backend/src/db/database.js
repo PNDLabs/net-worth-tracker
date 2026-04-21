@@ -102,6 +102,35 @@ function runMigrations(db) {
       value      TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS value_history (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT    NOT NULL,
+      entity_id   INTEGER NOT NULL,
+      value       REAL    NOT NULL,
+      recorded_at TEXT    NOT NULL DEFAULT (date('now')),
+      notes       TEXT,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_value_history_entity
+      ON value_history(entity_type, entity_id, recorded_at);
+
+    CREATE TABLE IF NOT EXISTS sip_installments (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      name             TEXT    NOT NULL,
+      symbol           TEXT,
+      account_id       INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+      amount           REAL    NOT NULL,
+      units            REAL,
+      nav              REAL,
+      installment_date TEXT    NOT NULL DEFAULT (date('now')),
+      notes            TEXT,
+      created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sip_installments_date
+      ON sip_installments(installment_date);
   `);
 }
 

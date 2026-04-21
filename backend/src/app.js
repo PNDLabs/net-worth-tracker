@@ -9,6 +9,8 @@ const networthRouter = require('./routes/networth');
 const importRouter = require('./routes/importRoutes');
 const insuranceRouter = require('./routes/insurance');
 const settingsRouter = require('./routes/settings');
+const valueHistoryRouter = require('./routes/valueHistory');
+const sipRouter = require('./routes/sip');
 const db = require('./db/database');
 
 // Standard limiter: 300 requests per minute for read/write endpoints
@@ -41,6 +43,8 @@ function createApp() {
   app.use('/api/networth', apiLimiter, networthRouter);
   app.use('/api/insurance', apiLimiter, insuranceRouter);
   app.use('/api/settings', apiLimiter, settingsRouter);
+  app.use('/api/value-history', apiLimiter, valueHistoryRouter);
+  app.use('/api/sip', apiLimiter, sipRouter);
   app.use('/api/import', importLimiter, importRouter);
 
   // Health check
