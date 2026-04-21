@@ -277,25 +277,25 @@ function parseInsuranceDocument(text) {
   const institution = extractInstitution(text);
 
   const nameMatch = text.match(
-    /(?:policy\s+(?:name|type)|coverage\s+type|plan\s+name|product\s+name)[:\s]+([A-Za-z0-9 \-]+)/i
+    /(?:policy\s+(?:name|type)|coverage\s+type|plan\s+name|product\s+name)[ \t:]{1,20}([A-Za-z0-9 \-]+)/i
   );
   const name = nameMatch ? nameMatch[1].trim() : `${institution} Insurance`;
 
-  const policyNumMatch = text.match(/policy\s+(?:number|no\.?|#)[:\s]+([A-Z0-9\-]+)/i);
+  const policyNumMatch = text.match(/policy\s+(?:number|no\.?|#)[ \t:]{1,20}([A-Z0-9\-]+)/i);
   const premiumMatch = text.match(
-    /(?:premium|payment)[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/i
+    /(?:premium|payment)[ \t:]{1,30}\$?\s*([\d,]+(?:\.\d{1,2})?)/i
   );
   const coverageMatch = text.match(
-    /(?:coverage|face\s+value|sum\s+assured|benefit\s+amount)[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/i
+    /(?:coverage|face\s+value|sum\s+assured|benefit\s+amount)[ \t:]{1,30}\$?\s*([\d,]+(?:\.\d{1,2})?)/i
   );
   const startMatch = text.match(
-    /(?:effective\s+date|start\s+date|policy\s+start)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+    /(?:effective\s+date|start\s+date|policy\s+start)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
   );
   const endMatch = text.match(
-    /(?:expiry\s+date|expiration\s+date|end\s+date|policy\s+end)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+    /(?:expiry\s+date|expiration\s+date|end\s+date|policy\s+end)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
   );
   const renewalMatch = text.match(
-    /(?:renewal\s+date|renews\s+on)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+    /(?:renewal\s+date|renews\s+on)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
   );
 
   const lowerText = text.toLowerCase();

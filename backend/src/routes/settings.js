@@ -7,6 +7,7 @@ router.get('/', (req, res) => {
   const rows = db.getDb().prepare('SELECT key, value FROM settings').all();
   const settings = {};
   for (const { key, value } of rows) {
+    // Attempt to parse stored JSON; fall back to raw string for non-JSON values
     try { settings[key] = JSON.parse(value); }
     catch { settings[key] = value; }
   }
@@ -43,6 +44,7 @@ router.patch('/', express.json(), (req, res) => {
   const rows = conn.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   for (const { key, value } of rows) {
+    // Attempt to parse stored JSON; fall back to raw string for non-JSON values
     try { settings[key] = JSON.parse(value); }
     catch { settings[key] = value; }
   }

@@ -47,7 +47,7 @@ function createApp() {
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
   // Server configuration (AI key availability, default currency, etc.)
-  app.get('/api/config', (req, res) => {
+  app.get('/api/config', apiLimiter, (req, res) => {
     const conn = db.getDb();
     let defaultCurrency = 'USD';
     try {

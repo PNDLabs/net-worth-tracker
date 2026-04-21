@@ -13,7 +13,7 @@ export default function AccountsPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(null);
+  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: 'USD', balance: '', notes: '' }));
   const [expandedId, setExpandedId] = useState(null);
   const [holdings, setHoldings] = useState({});
   const [showHoldingModal, setShowHoldingModal] = useState(false);
