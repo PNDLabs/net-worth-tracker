@@ -22,11 +22,12 @@
  */
 
 // Maximum characters of PDF text sent to the AI model.
-// ~12 000 chars ≈ 3 000 tokens at the typical 4 chars/token ratio,
-// which fits well within gpt-4o-mini's 128k context while keeping costs low.
-const MAX_AI_INPUT_CHARS = 12000;
+// 100 000 chars ≈ 25 000 tokens at the typical 4 chars/token ratio,
+// which fits well within gpt-4o-mini's 128k context and ensures large
+// multi-page documents (e.g. CAS PDFs with many funds) are fully analysed.
+const MAX_AI_INPUT_CHARS = 100000;
 
-const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, SIP/mutual fund transaction statement, or any other financial record).
+const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, SIP/mutual fund transaction statement, CAS (Consolidated Account Statement), or any other financial record).
 
 Your task is to identify the financial records in the text and return structured JSON in EXACTLY this format – no markdown fences, no prose, only the JSON object:
 {
@@ -52,11 +53,15 @@ For "sip" records (SIP / mutual fund transaction statements) use:
 Rules:
 - Return ONLY the JSON, nothing else.
 - If you cannot identify any records, return {"import_type":"accounts","records":[]}.
-- Convert all monetary values to plain numbers (no $ signs or commas).
+- Convert all monetary values to plain positive numbers (no $ or ₹ signs, no commas, no negative signs).
+- Liabilities current_balance must always be a positive number even if the statement shows it with a minus sign.
 - If a field is unknown, use null.
 - For investment/brokerage accounts include the total value as the balance.
+- FD (Fixed Deposit) accounts should use type "cd" in accounts records.
 - Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
-- Choose "sip" as import_type when the document contains mutual fund SIP/systematic investment plan transactions with NAV and units data. Each transaction row becomes one record.`;
+- Choose "sip" as import_type when the document contains mutual fund SIP/systematic investment plan transactions with NAV and units data. Each transaction row becomes one record.
+- For CAS (Consolidated Account Statement) documents that list multiple mutual fund scheme portfolios: return each scheme as an "accounts" record with type="brokerage", balance=current market value, institution=AMC name, and use import_type="accounts".
+- When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -139,6 +144,13 @@ function normalizeDate(s) {
 function detectStatementType(text) {
   const lower = text.toLowerCase();
 
+  // CAS (Consolidated Account Statement) – must be checked before generic SIP
+  // because CAS also contains folio/NAV signals
+  if (
+    /\bconsolidated\s+account\s+statement\b/.test(lower) ||
+    (/\bfolio\b/.test(lower) && /\bclosing\s+balance\b/.test(lower))
+  ) return 'cas';
+
   // Strong signals for SIP / mutual fund transaction statements
   if (
     /\bsystematic\s+investment\s+plan\b/.test(lower) ||
@@ -204,11 +216,13 @@ function parseBankStatement(text) {
   const institution = extractInstitution(text);
   const records = [];
 
-  // Look for labelled balance lines
+  // Look for labelled balance lines (supports both $ and ₹/Rs. prefixes)
   const balancePatterns = [
-    /(?:ending|closing|available|current|account)\s+balance[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/gi,
-    /(?:total|portfolio)\s+value[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/gi,
-    /balance\s+as\s+of[^$\n]*\$?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /(?:ending|closing|available|current|account)\s+balance[:\s]+(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /(?:total|portfolio)\s+value[:\s]+(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /balance\s+as\s+of[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    // Fixed Deposit / FD balances (common in Indian bank statements)
+    /(?:fixed\s+deposit|fd)\s+(?:balance|amount|principal)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
   ];
 
   const foundBalances = new Set();
@@ -229,9 +243,12 @@ function parseBankStatement(text) {
         const name = nameMatch ? nameMatch[1].trim() : `${institution} Account`;
 
         // Detect account type
+        const matchLine = m[0].toLowerCase();
         const context = (before + m[0]).toLowerCase();
         let type = 'other';
-        if (/checking/.test(context)) type = 'checking';
+        // Check FD only in the matched text itself to avoid contaminating nearby accounts
+        if (/fixed\s*deposit/.test(matchLine)) type = 'cd';
+        else if (/checking/.test(context)) type = 'checking';
         else if (/saving/.test(context)) type = 'savings';
         else if (/money\s*market/.test(context)) type = 'money_market';
         else if (/cd|certificate/.test(context)) type = 'cd';
@@ -247,7 +264,7 @@ function parseBankStatement(text) {
 
   // If no labelled balances found, try the largest amounts on "total" lines
   if (records.length === 0) {
-    const totalLine = text.match(/(?:total|net)\s+(?:assets?|balance|worth)[^$\n]*\$?\s*([\d,]+(?:\.\d{1,2})?)/i);
+    const totalLine = text.match(/(?:total|net)\s+(?:assets?|balance|worth)[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
     if (totalLine) {
       const balance = parseFloat(totalLine[1].replace(/,/g, ''));
       records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance });
@@ -304,7 +321,7 @@ function parseLiabilityStatement(text) {
       lender: institution,
       type,
       original_principal: originalMatch ? parseFloat(originalMatch[1].replace(/,/g, '')) : null,
-      current_balance: parseFloat(balanceMatch[1].replace(/,/g, '')),
+      current_balance: Math.abs(parseFloat(balanceMatch[1].replace(/,/g, ''))),
       interest_rate: rateMatch ? parseFloat(rateMatch[1]) : null,
       minimum_payment: minPayMatch ? parseFloat(minPayMatch[1].replace(/,/g, '')) : null,
     });
@@ -431,7 +448,93 @@ function parseInsuranceDocument(text) {
   return { import_type: 'insurance', records: [record] };
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── CAS (Consolidated Account Statement) Parser ─────────────────────────────
+
+/**
+ * Parse a CAS (Consolidated Account Statement) that lists multiple mutual fund
+ * scheme portfolios with closing balances.
+ *
+ * Each scheme's "Closing Balance" line is extracted as an accounts record where
+ * balance = current market value.  Falls back to parseBankStatement if no
+ * closing balance lines are found.
+ *
+ * Typical CAS line formats:
+ *   Closing Balance:  110.234  490.00  54,014.66
+ *   Closing Balance   110.234  490.00  ₹54,014.66
+ *   Closing Balance   110.234 units @ ₹490.00 = ₹54,014.66
+ */
+function parseCasStatement(text) {
+  const records = [];
+  const lines = text.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    // Only process lines that begin with "Closing Balance"
+    if (!/^closing\s+balance/i.test(line)) continue;
+
+    // Extract all numbers from the line; the last (rightmost) is the market value,
+    // the second-to-last is the NAV, and the first is the unit count.
+    // Handles formats: "Closing Balance: 110.234  490.00  54,014.66"
+    //                  "Closing Balance  110.234 units @ Rs. 490.00 = Rs. 54,014.66"
+    const nums = [];
+    const numRe = /[\d,]+(?:\.\d+)?/g;
+    let nm;
+    while ((nm = numRe.exec(line)) !== null) {
+      const val = parseFloat(nm[0].replace(/,/g, ''));
+      if (!isNaN(val)) nums.push(val);
+    }
+
+    // Need at least one number (the market value); largest single value is safest proxy
+    // if only one number found.  With three numbers: [units, nav, marketValue].
+    if (nums.length === 0) continue;
+    const marketValue = nums[nums.length - 1];
+    if (marketValue <= 0) continue;
+
+    // Look backwards (up to 25 lines) to find the scheme name and AMC name
+    let schemeName = null;
+    let amcName = null;
+
+    for (let j = i - 1; j >= Math.max(0, i - 25); j--) {
+      const prev = lines[j].trim();
+      if (!prev) continue;
+
+      // Skip pure balance/transaction/header lines
+      if (/\b(?:opening|closing|balance|transaction|date|amount|units?|nav|folio)\b/i.test(prev)) continue;
+
+      // AMC/institution: line contains "Mutual Fund", "AMC", "Asset Management", or "Limited"
+      if (!amcName && /\b(?:mutual\s+fund|amc|asset\s+management|trustee)\b/i.test(prev)) {
+        amcName = prev.replace(/\s+/g, ' ').trim();
+      }
+
+      // Scheme name: line contains "Fund", "Growth", "Dividend", "Direct", "Regular", or "Plan"
+      if (!schemeName &&
+          /\b(?:fund|growth|dividend|direct|regular|plan|scheme)\b/i.test(prev) &&
+          prev.length > 8) {
+        schemeName = prev.replace(/\s*\(ISIN[^)]{0,20}\)/gi, '').replace(/\s+/g, ' ').trim();
+      }
+
+      if (schemeName && amcName) break;
+    }
+
+    records.push({
+      name: schemeName || `Mutual Fund Scheme ${records.length + 1}`,
+      institution: amcName || 'Mutual Fund',
+      type: 'brokerage',
+      currency: 'INR',
+      balance: marketValue,
+    });
+  }
+
+  // Fall back to generic bank-statement parsing if nothing was found
+  if (records.length === 0) {
+    return parseBankStatement(text);
+  }
+
+  return { import_type: 'accounts', records };
+}
+
+
 
 /**
  * Parse extracted PDF text into structured financial records.
@@ -458,15 +561,17 @@ async function parseStatement(text, options = {}) {
   // Pattern-based fallback
   const stmtType = detectStatementType(text);
   const result =
-    stmtType === 'sip'
-      ? parseSipStatement(text)
-      : stmtType === 'liabilities'
-        ? parseLiabilityStatement(text)
-        : stmtType === 'insurance'
-          ? parseInsuranceDocument(text)
-          : parseBankStatement(text);
+    stmtType === 'cas'
+      ? parseCasStatement(text)
+      : stmtType === 'sip'
+        ? parseSipStatement(text)
+        : stmtType === 'liabilities'
+          ? parseLiabilityStatement(text)
+          : stmtType === 'insurance'
+            ? parseInsuranceDocument(text)
+            : parseBankStatement(text);
 
   return { ...result, method: 'pattern', raw_preview };
 }
 
-module.exports = { parseStatement, detectStatementType };
+module.exports = { parseStatement, detectStatementType, parseCasStatement };
