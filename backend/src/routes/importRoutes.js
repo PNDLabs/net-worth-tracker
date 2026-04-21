@@ -10,8 +10,9 @@ class DuplicateError extends Error {}
 
 /**
  * Returns true when a row with the same natural key already exists in the DB.
+ * SIP installments are never deduplicated (each payment is a unique event).
  * @param {object} conn - better-sqlite3 connection
- * @param {string} importType - 'accounts'|'assets'|'liabilities'|'insurance'
+ * @param {string} importType - 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
  * @param {object} row - record with at least { name, institution?, lender?, provider? }
  */
 function isDuplicateRecord(conn, importType, row) {
@@ -57,7 +58,7 @@ const upload = multer({
  *   ?import_type=assets
  *   ?import_type=liabilities
  */
-const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance'];
+const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance', 'sip'];
 
 router.post('/csv', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -153,6 +154,24 @@ router.post('/csv', upload.single('file'), (req, res) => {
         renewal_date ? String(renewal_date) : null,
         notes ? String(notes) : null
       );
+
+    } else if (importType === 'sip') {
+      const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+      if (!name) throw new Error('name is required');
+      if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+      conn.prepare(
+        `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        String(name),
+        symbol ? String(symbol) : null,
+        account_id ? Number(account_id) : null,
+        Number(amount),
+        units != null ? Number(units) : null,
+        nav != null ? Number(nav) : null,
+        installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
+        notes ? String(notes) : null
+      );
     }
   });
 
@@ -242,6 +261,23 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           start_date ? String(start_date) : null,
           end_date ? String(end_date) : null,
           renewal_date ? String(renewal_date) : null,
+          notes ? String(notes) : null
+        );
+
+      } else if (importType === 'sip') {
+        const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+        if (!name) throw new Error('name is required');
+        if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+        conn.prepare(
+          `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          String(name),
+          symbol ? String(symbol) : null,
+          account_id ? Number(account_id) : null,
+          Number(amount),
+          units != null ? Number(units) : null,
+          nav != null ? Number(nav) : null,
+          installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
           notes ? String(notes) : null
         );
       }
@@ -382,6 +418,22 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             start_date ? String(start_date) : null,
             end_date ? String(end_date) : null,
             renewal_date ? String(renewal_date) : null,
+            notes ? String(notes) : null
+          );
+        } else if (importType === 'sip') {
+          const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
+          if (!name) throw new Error('name is required');
+          if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
+          conn.prepare(
+            `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            String(name),
+            symbol ? String(symbol) : null,
+            account_id ? Number(account_id) : null,
+            Number(amount),
+            units != null ? Number(units) : null,
+            nav != null ? Number(nav) : null,
+            installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
             notes ? String(notes) : null
           );
         }
