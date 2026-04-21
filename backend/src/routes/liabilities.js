@@ -31,6 +31,11 @@ router.post('/', (req, res) => {
   }
 
   const conn = db.getDb();
+  const duplicate = conn.prepare(
+    `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+  ).get(name, lender || null);
+  if (duplicate) return res.status(409).json({ error: 'A liability with the same name and lender already exists' });
+
   const result = conn.prepare(
     `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment, notes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -44,6 +49,10 @@ router.post('/', (req, res) => {
   );
 
   const liability = conn.prepare('SELECT * FROM liabilities WHERE id = ?').get(result.lastInsertRowid);
+  conn.prepare(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('liability', ?, ?, date('now'), 'Initial balance')`
+  ).run(liability.id, liability.current_balance);
   res.status(201).json(liability);
 });
 
@@ -76,6 +85,13 @@ router.put('/:id', (req, res) => {
     updated.current_balance, updated.interest_rate, updated.minimum_payment,
     updated.notes, req.params.id
   );
+
+  if (updated.current_balance !== existing.current_balance) {
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at)
+       VALUES ('liability', ?, ?, date('now'))`
+    ).run(req.params.id, updated.current_balance);
+  }
 
   const liability = conn.prepare('SELECT * FROM liabilities WHERE id = ?').get(req.params.id);
   res.json(liability);

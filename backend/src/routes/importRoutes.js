@@ -6,6 +6,8 @@ const db = require('../db/database');
 const { extractPdfText } = require('../utils/pdfExtractor');
 const { parseStatement } = require('../utils/statementParser');
 
+class DuplicateError extends Error {}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB (PDFs can be larger than CSVs)
@@ -63,8 +65,32 @@ router.post('/csv', upload.single('file'), (req, res) => {
     return out;
   };
 
+  const isDuplicate = (row) => {
+    if (importType === 'accounts') {
+      return !!conn.prepare(
+        `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name), row.institution ? String(row.institution) : null);
+    }
+    if (importType === 'assets') {
+      return !!conn.prepare(`SELECT id FROM assets WHERE lower(name) = lower(?)`).get(String(row.name));
+    }
+    if (importType === 'liabilities') {
+      return !!conn.prepare(
+        `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name), row.lender ? String(row.lender) : null);
+    }
+    if (importType === 'insurance') {
+      return !!conn.prepare(
+        `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name), row.provider ? String(row.provider) : null);
+    }
+    return false;
+  };
+
   const importRow = conn.transaction((record) => {
     const row = normalizeKeys(record);
+
+    if (isDuplicate(row)) throw new DuplicateError('Duplicate entry skipped');
 
     if (importType === 'accounts') {
       const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
@@ -127,7 +153,9 @@ router.post('/csv', upload.single('file'), (req, res) => {
       results.imported++;
     } catch (err) {
       results.skipped++;
-      results.errors.push({ row: i + 2, message: err.message });
+      if (!(err instanceof DuplicateError)) {
+        results.errors.push({ row: i + 2, message: err.message });
+      }
     }
   }
 
@@ -152,9 +180,33 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   const conn = db.getDb();
   const results = { imported: 0, skipped: 0, errors: [] };
 
+  const isDuplicateJson = (row) => {
+    if (importType === 'accounts') {
+      return !!conn.prepare(
+        `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name || ''), row.institution ? String(row.institution) : null);
+    }
+    if (importType === 'assets') {
+      return !!conn.prepare(`SELECT id FROM assets WHERE lower(name) = lower(?)`).get(String(row.name || ''));
+    }
+    if (importType === 'liabilities') {
+      return !!conn.prepare(
+        `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name || ''), row.lender ? String(row.lender) : null);
+    }
+    if (importType === 'insurance') {
+      return !!conn.prepare(
+        `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
+      ).get(String(row.name || ''), row.provider ? String(row.provider) : null);
+    }
+    return false;
+  };
+
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
+      if (isDuplicateJson(row)) { results.skipped++; continue; }
+
       if (importType === 'accounts') {
         const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
         if (!name) throw new Error('name is required');
@@ -291,9 +343,33 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     const conn = db.getDb();
     const results = { imported: 0, skipped: 0, errors: [], method: parsed.method };
 
+    const isDuplicatePdf = (row) => {
+      if (importType === 'accounts') {
+        return !!conn.prepare(
+          `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+        ).get(String(row.name || ''), row.institution ? String(row.institution) : null);
+      }
+      if (importType === 'assets') {
+        return !!conn.prepare(`SELECT id FROM assets WHERE lower(name) = lower(?)`).get(String(row.name || ''));
+      }
+      if (importType === 'liabilities') {
+        return !!conn.prepare(
+          `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+        ).get(String(row.name || ''), row.lender ? String(row.lender) : null);
+      }
+      if (importType === 'insurance') {
+        return !!conn.prepare(
+          `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
+        ).get(String(row.name || ''), row.provider ? String(row.provider) : null);
+      }
+      return false;
+    };
+
     for (let i = 0; i < parsed.records.length; i++) {
       const row = parsed.records[i];
       try {
+        if (isDuplicatePdf(row)) { results.skipped++; continue; }
+
         if (importType === 'accounts') {
           const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
           if (!name) throw new Error('name is required');

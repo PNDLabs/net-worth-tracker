@@ -26,12 +26,21 @@ router.post('/', (req, res) => {
   }
 
   const conn = db.getDb();
+  const duplicate = conn.prepare(
+    `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+  ).get(name, institution || null);
+  if (duplicate) return res.status(409).json({ error: 'An account with the same name and institution already exists' });
+
   const result = conn.prepare(
     `INSERT INTO accounts (name, institution, type, currency, balance, notes)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(name, institution || null, type, currency, Number(balance), notes || null);
 
   const account = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(result.lastInsertRowid);
+  conn.prepare(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('account', ?, ?, date('now'), 'Initial balance')`
+  ).run(account.id, account.balance);
   res.status(201).json(account);
 });
 
@@ -57,6 +66,13 @@ router.put('/:id', (req, res) => {
     `UPDATE accounts SET name=?, institution=?, type=?, currency=?, balance=?, notes=?,
      updated_at=datetime('now') WHERE id=?`
   ).run(updated.name, updated.institution, updated.type, updated.currency, updated.balance, updated.notes, req.params.id);
+
+  if (updated.balance !== existing.balance) {
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at)
+       VALUES ('account', ?, ?, date('now'))`
+    ).run(req.params.id, updated.balance);
+  }
 
   const account = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(req.params.id);
   res.json(account);
@@ -90,6 +106,11 @@ router.post('/:id/holdings', (req, res) => {
 
   const { symbol, name, shares = 0, cost_basis, current_price, current_value, as_of_date } = req.body;
   if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+
+  const duplicate = conn.prepare(
+    `SELECT id FROM holdings WHERE account_id = ? AND upper(symbol) = upper(?)`
+  ).get(req.params.id, symbol);
+  if (duplicate) return res.status(409).json({ error: 'A holding with the same symbol already exists in this account' });
 
   const result = conn.prepare(
     `INSERT INTO holdings (account_id, symbol, name, shares, cost_basis, current_price, current_value, as_of_date)

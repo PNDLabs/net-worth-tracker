@@ -510,3 +510,239 @@ describe('PDF Import API', () => {
   });
 });
 
+
+// ─── Deduplication ────────────────────────────────────────────────────────────
+
+describe('Deduplication', () => {
+  test('POST /api/accounts - rejects duplicate name+institution with 409', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Chase Checking', institution: 'Chase', type: 'checking', balance: 1000 });
+    const res = await request(app).post('/api/accounts').send({ name: 'Chase Checking', institution: 'Chase', type: 'savings', balance: 2000 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  test('POST /api/accounts - allows same name with different institution', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Savings', institution: 'BankA', type: 'savings', balance: 1000 });
+    const res = await request(app).post('/api/accounts').send({ name: 'Savings', institution: 'BankB', type: 'savings', balance: 2000 });
+    expect(res.status).toBe(201);
+  });
+
+  test('POST /api/assets - rejects duplicate name with 409', async () => {
+    await request(app).post('/api/assets').send({ name: 'My Car', category: 'vehicle', current_value: 20000 });
+    const res = await request(app).post('/api/assets').send({ name: 'My Car', category: 'vehicle', current_value: 18000 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  test('POST /api/liabilities - rejects duplicate name+lender with 409', async () => {
+    await request(app).post('/api/liabilities').send({ name: 'Car Loan', lender: 'Toyota', type: 'auto', current_balance: 15000 });
+    const res = await request(app).post('/api/liabilities').send({ name: 'Car Loan', lender: 'Toyota', type: 'auto', current_balance: 14000 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  test('POST /api/accounts/:id/holdings - rejects duplicate symbol with 409', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'Brokerage', type: 'brokerage', balance: 0 });
+    await request(app).post(`/api/accounts/${acc.body.id}/holdings`).send({ symbol: 'AAPL', shares: 10 });
+    const res = await request(app).post(`/api/accounts/${acc.body.id}/holdings`).send({ symbol: 'AAPL', shares: 5 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  test('POST /api/insurance - rejects duplicate name+provider with 409', async () => {
+    await request(app).post('/api/insurance').send({ name: 'Life Policy', provider: 'LIC', type: 'life', premium_amount: 500 });
+    const res = await request(app).post('/api/insurance').send({ name: 'Life Policy', provider: 'LIC', type: 'life', premium_amount: 600 });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  test('POST /api/import/csv - skips duplicate accounts silently', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Chase Checking', institution: 'Chase', type: 'checking', balance: 5000 });
+    const csv = `name,institution,type,currency,balance\nChase Checking,Chase,checking,USD,6000\nNew Account,BoA,savings,USD,1000`;
+    const res = await request(app)
+      .post('/api/import/csv?import_type=accounts')
+      .attach('file', Buffer.from(csv), 'accounts.csv');
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.skipped).toBe(1);
+  });
+
+  test('POST /api/import/json - skips duplicate assets silently', async () => {
+    await request(app).post('/api/assets').send({ name: 'House', category: 'real_estate', current_value: 300000 });
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'assets',
+      records: [
+        { name: 'House', category: 'real_estate', current_value: 310000 },
+        { name: 'New Asset', category: 'other', current_value: 5000 },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.skipped).toBe(1);
+  });
+});
+
+// ─── Value History ────────────────────────────────────────────────────────────
+
+describe('Value History API', () => {
+  test('POST /api/accounts auto-records initial balance in value_history', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'History Test', type: 'savings', balance: 5000 });
+    const res = await request(app).get(`/api/value-history?entity_type=account&entity_id=${acc.body.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThanOrEqual(1);
+    expect(res.body[0].value).toBe(5000);
+  });
+
+  test('PUT /api/accounts records new balance in value_history on change', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'BalChg', type: 'checking', balance: 1000 });
+    await request(app).put(`/api/accounts/${acc.body.id}`).send({ balance: 2000 });
+    const res = await request(app).get(`/api/value-history?entity_type=account&entity_id=${acc.body.id}`);
+    expect(res.status).toBe(200);
+    const values = res.body.map((r) => r.value);
+    expect(values).toContain(1000);
+    expect(values).toContain(2000);
+  });
+
+  test('POST /api/assets auto-records initial value in value_history', async () => {
+    const asset = await request(app).post('/api/assets').send({ name: 'VH Asset', category: 'other', current_value: 8000 });
+    const res = await request(app).get(`/api/value-history?entity_type=asset&entity_id=${asset.body.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body[0].value).toBe(8000);
+  });
+
+  test('PUT /api/assets records updated value in value_history', async () => {
+    const asset = await request(app).post('/api/assets').send({ name: 'VH Asset2', category: 'other', current_value: 5000 });
+    await request(app).put(`/api/assets/${asset.body.id}`).send({ current_value: 6000 });
+    const res = await request(app).get(`/api/value-history?entity_type=asset&entity_id=${asset.body.id}`);
+    const values = res.body.map((r) => r.value);
+    expect(values).toContain(6000);
+  });
+
+  test('GET /api/value-history/growth - returns growth data', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'Growth Test', type: 'savings', balance: 1000 });
+    await request(app).put(`/api/accounts/${acc.body.id}`).send({ balance: 1200 });
+    const res = await request(app).get(`/api/value-history/growth?entity_type=account&entity_id=${acc.body.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.first_value).toBe(1000);
+    expect(res.body.latest_value).toBe(1200);
+    expect(res.body.absolute_change).toBe(200);
+    expect(res.body.percent_change).toBeCloseTo(20, 0);
+  });
+
+  test('POST /api/value-history - manually records a value', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'Manual VH', type: 'savings', balance: 3000 });
+    const res = await request(app).post('/api/value-history').send({
+      entity_type: 'account',
+      entity_id: acc.body.id,
+      value: 3500,
+      recorded_at: '2025-01-01',
+      notes: 'Manual entry',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.value).toBe(3500);
+    expect(res.body.notes).toBe('Manual entry');
+  });
+
+  test('GET /api/value-history - returns 400 for invalid entity_type', async () => {
+    const res = await request(app).get('/api/value-history?entity_type=invalid&entity_id=1');
+    expect(res.status).toBe(400);
+  });
+});
+
+// ─── SIP Installments ─────────────────────────────────────────────────────────
+
+describe('SIP Installments API', () => {
+  test('GET /api/sip - returns empty array initially', async () => {
+    const res = await request(app).get('/api/sip');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  test('POST /api/sip - creates a SIP installment', async () => {
+    const res = await request(app).post('/api/sip').send({
+      name: 'NIFTY 50 SIP',
+      symbol: 'NIFTYBEES',
+      amount: 5000,
+      units: 10.5,
+      nav: 476.19,
+      installment_date: '2025-01-15',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe('NIFTY 50 SIP');
+    expect(res.body.symbol).toBe('NIFTYBEES');
+    expect(res.body.amount).toBe(5000);
+    expect(res.body.units).toBe(10.5);
+    expect(res.body.installment_date).toBe('2025-01-15');
+  });
+
+  test('POST /api/sip - rejects missing name', async () => {
+    const res = await request(app).post('/api/sip').send({ amount: 1000, symbol: 'X' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/name/i);
+  });
+
+  test('POST /api/sip - rejects invalid amount', async () => {
+    const res = await request(app).post('/api/sip').send({ name: 'SIP', amount: -100 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/amount/i);
+  });
+
+  test('GET /api/sip/:id - returns single installment', async () => {
+    const created = await request(app).post('/api/sip').send({ name: 'SIP One', amount: 2000 });
+    const res = await request(app).get(`/api/sip/${created.body.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe('SIP One');
+  });
+
+  test('GET /api/sip/:id - 404 for unknown id', async () => {
+    const res = await request(app).get('/api/sip/9999');
+    expect(res.status).toBe(404);
+  });
+
+  test('PUT /api/sip/:id - updates amount', async () => {
+    const created = await request(app).post('/api/sip').send({ name: 'Update SIP', amount: 1000 });
+    const res = await request(app).put(`/api/sip/${created.body.id}`).send({ amount: 1500 });
+    expect(res.status).toBe(200);
+    expect(res.body.amount).toBe(1500);
+  });
+
+  test('DELETE /api/sip/:id - deletes installment', async () => {
+    const created = await request(app).post('/api/sip').send({ name: 'Delete SIP', amount: 500 });
+    const del = await request(app).delete(`/api/sip/${created.body.id}`);
+    expect(del.status).toBe(200);
+    const get = await request(app).get(`/api/sip/${created.body.id}`);
+    expect(get.status).toBe(404);
+  });
+
+  test('GET /api/sip/summary - returns aggregated summary', async () => {
+    await request(app).post('/api/sip').send({ name: 'SIP Jan', symbol: 'AAPL', amount: 5000, units: 25 });
+    await request(app).post('/api/sip').send({ name: 'SIP Feb', symbol: 'AAPL', amount: 5000, units: 27 });
+    const res = await request(app).get('/api/sip/summary');
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThanOrEqual(1);
+    const aapl = res.body.find((s) => s.symbol === 'AAPL');
+    expect(aapl).toBeDefined();
+    expect(aapl.installment_count).toBeGreaterThanOrEqual(2);
+    expect(aapl.total_invested).toBeGreaterThanOrEqual(10000);
+  });
+
+  test('GET /api/sip?symbol=AAPL - filters by symbol', async () => {
+    await request(app).post('/api/sip').send({ name: 'Filter SIP', symbol: 'MSFT', amount: 3000 });
+    await request(app).post('/api/sip').send({ name: 'Other SIP', symbol: 'GOOG', amount: 2000 });
+    const res = await request(app).get('/api/sip?symbol=MSFT');
+    expect(res.status).toBe(200);
+    expect(res.body.every((s) => s.symbol === 'MSFT')).toBe(true);
+  });
+
+  test('POST /api/sip - links to account', async () => {
+    const acc = await request(app).post('/api/accounts').send({ name: 'SIP Account', type: 'brokerage', balance: 0 });
+    const res = await request(app).post('/api/sip').send({
+      name: 'Fund SIP',
+      symbol: 'MUTUAL',
+      account_id: acc.body.id,
+      amount: 10000,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.account_id).toBe(acc.body.id);
+  });
+});

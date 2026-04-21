@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, formatDate, typeLabel } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const CATEGORIES = ['real_estate', 'vehicle', 'crypto', 'collectible', 'business', 'other'];
 const EMPTY = { name: '', category: 'other', acquisition_date: '', acquisition_cost: '', current_value: '', notes: '' };
@@ -13,6 +14,8 @@ export default function AssetsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [historyId, setHistoryId] = useState(null);
+  const [historyData, setHistoryData] = useState({});
   const { currency } = useCurrency();
   const fmt = (v) => formatCurrency(v, currency);
 
@@ -36,6 +39,18 @@ export default function AssetsPage() {
     if (!confirm('Delete this asset?')) return;
     try { await api.deleteAsset(id); load(); }
     catch (e) { setError(e.message); }
+  }
+
+  async function toggleHistory(id) {
+    if (historyId === id) { setHistoryId(null); return; }
+    setHistoryId(id);
+    if (!historyData[id]) {
+      const [hist, growth] = await Promise.all([
+        api.getValueHistory('asset', id).catch(() => []),
+        api.getValueGrowth('asset', id).catch(() => null),
+      ]);
+      setHistoryData((prev) => ({ ...prev, [id]: { hist, growth } }));
+    }
   }
 
   const total = assets.reduce((s, a) => s + a.current_value, 0);
@@ -73,22 +88,65 @@ export default function AssetsPage() {
                 {assets.map((a) => {
                   const gl = a.acquisition_cost != null ? a.current_value - a.acquisition_cost : null;
                   return (
-                    <tr key={a.id}>
-                      <td><strong>{a.name}</strong>{a.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.notes}</div>}</td>
-                      <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
-                      <td>{formatDate(a.acquisition_date)}</td>
-                      <td style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
-                      <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
-                      <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
-                        {gl != null ? `${gl >= 0 ? '+' : ''}${fmt(gl)}` : '—'}
-                      </td>
-                      <td>
-                        <div className="flex-gap">
-                          <button className="btn-ghost btn-sm" onClick={() => openEdit(a)}>Edit</button>
-                          <button className="btn-danger btn-sm" onClick={() => remove(a.id)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={a.id}>
+                        <td><strong>{a.name}</strong>{a.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.notes}</div>}</td>
+                        <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
+                        <td>{formatDate(a.acquisition_date)}</td>
+                        <td style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
+                        <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
+                        <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
+                          {gl != null ? `${gl >= 0 ? '+' : ''}${fmt(gl)}` : '—'}
+                        </td>
+                        <td>
+                          <div className="flex-gap">
+                            <button className="btn-ghost btn-sm" onClick={() => openEdit(a)}>Edit</button>
+                            <button className="btn-danger btn-sm" onClick={() => remove(a.id)}>Delete</button>
+                            <button className="btn-ghost btn-sm" onClick={() => toggleHistory(a.id)}>📈 History</button>
+                          </div>
+                        </td>
+                      </tr>
+                      {historyId === a.id && (
+                        <tr key={`vh-${a.id}`}>
+                          <td colSpan={7} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                            {(() => {
+                              const d = historyData[a.id];
+                              if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
+                              const g = d.growth;
+                              return (
+                                <>
+                                  {g && g.data_points > 0 && (
+                                    <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
+                                      <span>First: <strong>{fmt(g.first_value)}</strong> ({formatDate(g.first_date)})</span>
+                                      <span>Latest: <strong>{fmt(g.latest_value)}</strong> ({formatDate(g.latest_date)})</span>
+                                      <span style={{ color: g.absolute_change >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                        Change: <strong>{g.absolute_change >= 0 ? '+' : ''}{fmt(g.absolute_change)}</strong>
+                                        {g.percent_change != null && <> ({g.percent_change >= 0 ? '+' : ''}{g.percent_change}%)</>}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {d.hist.length > 1 ? (
+                                    <ResponsiveContainer width="100%" height={180}>
+                                      <LineChart data={d.hist} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                                        <XAxis dataKey="recorded_at" tick={{ fontSize: 10 }} />
+                                        <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 10 }} />
+                                        <Tooltip formatter={(v) => fmt(v)} />
+                                        <Line type="monotone" dataKey="value" name="Value" stroke="#28a745" strokeWidth={2} dot />
+                                      </LineChart>
+                                    </ResponsiveContainer>
+                                  ) : d.hist.length === 1 ? (
+                                    <p style={{ color: 'var(--color-text-muted)' }}>Only one data point. Update the value to see a trend.</p>
+                                  ) : (
+                                    <p style={{ color: 'var(--color-text-muted)' }}>No history recorded yet.</p>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   );
                 })}
               </tbody>
