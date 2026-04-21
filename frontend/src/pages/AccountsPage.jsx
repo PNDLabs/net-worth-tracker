@@ -6,6 +6,9 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
 
+// Account types that can hold investment positions (stocks, mutual funds, etc.)
+const INVESTMENT_ACCOUNT_TYPES = new Set(['brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other']);
+
 const EMPTY_HOLDING = { symbol: '', name: '', shares: '', current_price: '', current_value: '' };
 
 export default function AccountsPage() {
@@ -113,9 +116,11 @@ export default function AccountsPage() {
                   <>
                     <tr key={acc.id}>
                       <td>
-                        <button className="btn-ghost btn-sm" onClick={() => toggleHoldings(acc.id)} style={{ marginRight: 6 }}>
-                          {expandedId === acc.id ? '▾' : '▸'}
-                        </button>
+                        {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
+                          <button className="btn-ghost btn-sm" onClick={() => toggleHoldings(acc.id)} style={{ marginRight: 6 }}>
+                            {expandedId === acc.id ? '▾' : '▸'}
+                          </button>
+                        )}
                         <strong>{acc.name}</strong>
                       </td>
                       <td>{acc.institution || '—'}</td>
@@ -126,12 +131,14 @@ export default function AccountsPage() {
                         <div className="flex-gap">
                           <button className="btn-ghost btn-sm" onClick={() => openEdit(acc)}>Edit</button>
                           <button className="btn-danger btn-sm" onClick={() => remove(acc.id)}>Delete</button>
-                          <button className="btn-ghost btn-sm" onClick={() => { setHoldingAccountId(acc.id); setHoldingForm(EMPTY_HOLDING); setShowHoldingModal(true); }}>+ Holding</button>
+                          {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
+                            <button className="btn-ghost btn-sm" onClick={() => { setHoldingAccountId(acc.id); setHoldingForm(EMPTY_HOLDING); setShowHoldingModal(true); }}>+ Holding</button>
+                          )}
                           <button className="btn-ghost btn-sm" onClick={() => toggleHistory(acc.id)}>📈 History</button>
                         </div>
                       </td>
                     </tr>
-                    {expandedId === acc.id && (
+                    {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && expandedId === acc.id && (
                       <tr key={`h-${acc.id}`}>
                         <td colSpan={6} style={{ padding: '0 24px 12px', background: 'var(--color-surface-2)' }}>
                           {holdings[acc.id]?.length > 0 ? (
