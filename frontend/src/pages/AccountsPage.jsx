@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, typeLabel } from '../hooks/format';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const ACCOUNT_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
 
-const EMPTY = { name: '', institution: '', type: 'checking', currency: 'USD', balance: '', notes: '' };
 const EMPTY_HOLDING = { symbol: '', name: '', shares: '', current_price: '', current_value: '' };
 
 export default function AccountsPage() {
@@ -13,18 +13,21 @@ export default function AccountsPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [holdings, setHoldings] = useState({});
   const [showHoldingModal, setShowHoldingModal] = useState(false);
   const [holdingForm, setHoldingForm] = useState(EMPTY_HOLDING);
   const [holdingAccountId, setHoldingAccountId] = useState(null);
+  const { currency } = useCurrency();
+
+  const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', notes: '' });
 
   const load = () => api.getAccounts().then(setAccounts).catch(e => setError(e.message)).finally(() => setLoading(false));
 
   useEffect(() => { load(); }, []);
 
-  function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); }
+  function openCreate() { setEditing(null); setForm(makeEmpty()); setShowModal(true); }
   function openEdit(acc) { setEditing(acc); setForm({ ...acc, balance: acc.balance, notes: acc.notes || '' }); setShowModal(true); }
 
   async function save() {

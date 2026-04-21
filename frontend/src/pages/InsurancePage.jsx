@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, formatDate, typeLabel } from '../hooks/format';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const INSURANCE_TYPES = [
   'life', 'term_life', 'health', 'dental', 'vision', 'auto', 'home',
@@ -38,10 +39,53 @@ export default function InsurancePage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const { currency } = useCurrency();
+  const fmt = (v) => formatCurrency(v, currency);
 
   const load = () =>
     api.getInsurance().then(setPlans).catch(e => setError(e.message)).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
+
+  async function parseFromText() {
+    if (!aiText.trim()) return setAiError('Please paste some text to parse.');
+    try {
+      setAiLoading(true); setAiError('');
+      const result = await api.parseText(aiText, 'insurance');
+      const records = result.records || [];
+      if (records.length === 0) {
+        setAiError('No insurance records could be extracted. Try adding more detail or use the manual form.');
+        return;
+      }
+      // Pre-fill the form with the first extracted record and switch to manual entry
+      const r = records[0];
+      setForm({
+        name: r.name || '',
+        provider: r.provider || '',
+        type: r.type || 'other',
+        policy_number: r.policy_number || '',
+        premium_amount: r.premium_amount ?? '',
+        premium_frequency: r.premium_frequency || 'monthly',
+        coverage_amount: r.coverage_amount ?? '',
+        start_date: r.start_date || '',
+        end_date: r.end_date || '',
+        renewal_date: r.renewal_date || '',
+        notes: r.notes || '',
+      });
+      setEditing(null);
+      setShowAiModal(false);
+      setAiText('');
+      setShowModal(true);
+      setError('');
+    } catch (e) {
+      setAiError(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); setError(''); }
   function openEdit(p) {
@@ -98,10 +142,13 @@ export default function InsurancePage() {
         <h2>
           Insurance &amp; Plans{' '}
           <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-muted)' }}>
-            Annual Premiums: <strong>{formatCurrency(totalAnnual)}</strong>
+            Annual Premiums: <strong>{fmt(totalAnnual)}</strong>
           </span>
         </h2>
-        <button className="btn-primary" onClick={openCreate}>+ Add Plan</button>
+        <div className="flex-gap">
+          <button className="btn-ghost" onClick={() => { setShowAiModal(true); setAiText(''); setAiError(''); }}>🤖 Parse from Text</button>
+          <button className="btn-primary" onClick={openCreate}>+ Add Plan</button>
+        </div>
       </div>
 
       {error && <div className="error-msg">{error}</div>}
@@ -145,16 +192,16 @@ export default function InsurancePage() {
                       <td style={{ textAlign: 'right' }}>
                         {p.premium_amount != null ? (
                           <>
-                            {formatCurrency(p.premium_amount)}
+                            {fmt(p.premium_amount)}
                             <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
                               {typeLabel(p.premium_frequency)}
-                              {annual != null && annual > 0 && ` · ${formatCurrency(annual)}/yr`}
+                              {annual != null && annual > 0 && ` · ${fmt(annual)}/yr`}
                             </div>
                           </>
                         ) : '—'}
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        {p.coverage_amount != null ? formatCurrency(p.coverage_amount) : '—'}
+                        {p.coverage_amount != null ? fmt(p.coverage_amount) : '—'}
                       </td>
                       <td>{formatDate(p.start_date)}</td>
                       <td>
@@ -268,6 +315,34 @@ export default function InsurancePage() {
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn-primary" onClick={save}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAiModal && (
+        <div className="modal-backdrop" onClick={() => setShowAiModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <h3>🤖 Parse Insurance from Text</h3>
+            <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+              Paste text from an insurance document, policy email, or any description. AI will extract the details and pre-fill the form.
+            </p>
+            {aiError && <div className="error-msg">{aiError}</div>}
+            <div className="form-group mb-4">
+              <label>Insurance document text</label>
+              <textarea
+                rows={10}
+                value={aiText}
+                onChange={(e) => setAiText(e.target.value)}
+                placeholder="Paste your insurance policy details, renewal notice, or any text describing your coverage here…"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setShowAiModal(false)} disabled={aiLoading}>Cancel</button>
+              <button className="btn-primary" onClick={parseFromText} disabled={aiLoading || !aiText.trim()}>
+                {aiLoading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Parsing…</> : '🤖 Extract & Fill Form'}
+              </button>
             </div>
           </div>
         </div>

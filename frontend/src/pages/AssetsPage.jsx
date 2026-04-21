@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, formatDate, typeLabel } from '../hooks/format';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const CATEGORIES = ['real_estate', 'vehicle', 'crypto', 'collectible', 'business', 'other'];
 const EMPTY = { name: '', category: 'other', acquisition_date: '', acquisition_cost: '', current_value: '', notes: '' };
@@ -12,6 +13,8 @@ export default function AssetsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const { currency } = useCurrency();
+  const fmt = (v) => formatCurrency(v, currency);
 
   const load = () => api.getAssets().then(setAssets).catch(e => setError(e.message)).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
@@ -42,7 +45,7 @@ export default function AssetsPage() {
   return (
     <div>
       <div className="page-header">
-        <h2>Assets <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-muted)' }}>Total: <strong>{formatCurrency(total)}</strong></span></h2>
+        <h2>Assets <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-muted)' }}>Total: <strong>{fmt(total)}</strong></span></h2>
         <button className="btn-primary" onClick={openCreate}>+ Add Asset</button>
       </div>
 
@@ -74,10 +77,10 @@ export default function AssetsPage() {
                       <td><strong>{a.name}</strong>{a.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.notes}</div>}</td>
                       <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
                       <td>{formatDate(a.acquisition_date)}</td>
-                      <td style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? formatCurrency(a.acquisition_cost) : '—'}</td>
-                      <td style={{ textAlign: 'right' }} className="amount positive">{formatCurrency(a.current_value)}</td>
+                      <td style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
+                      <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
                       <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
-                        {gl != null ? `${gl >= 0 ? '+' : ''}${formatCurrency(gl)}` : '—'}
+                        {gl != null ? `${gl >= 0 ? '+' : ''}${fmt(gl)}` : '—'}
                       </td>
                       <td>
                         <div className="flex-gap">

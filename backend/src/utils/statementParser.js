@@ -26,11 +26,11 @@
 // which fits well within gpt-4o-mini's 128k context while keeping costs low.
 const MAX_AI_INPUT_CHARS = 12000;
 
-const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you the raw text extracted from a PDF bank, investment, or loan statement.
+const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, or any other financial record).
 
 Your task is to identify the financial records in the text and return structured JSON in EXACTLY this format – no markdown fences, no prose, only the JSON object:
 {
-  "import_type": "<accounts|assets|liabilities>",
+  "import_type": "<accounts|assets|liabilities|insurance>",
   "records": [ ... ]
 }
 
@@ -43,12 +43,16 @@ For "assets" records use:
 For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
+For "insurance" records use:
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null }
+
 Rules:
 - Return ONLY the JSON, nothing else.
 - If you cannot identify any records, return {"import_type":"accounts","records":[]}.
 - Convert all monetary values to plain numbers (no $ signs or commas).
 - If a field is unknown, use null.
-- For investment/brokerage accounts include the total value as the balance.`;
+- For investment/brokerage accounts include the total value as the balance.
+- Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -99,6 +103,11 @@ async function parseWithAI(text, options = {}) {
  */
 function detectStatementType(text) {
   const lower = text.toLowerCase();
+
+  // Strong signals for insurance
+  if (
+    /\b(insurance\s+policy|policy\s+number|premium\s+(?:due|payment|amount)|coverage\s+amount|insured|beneficiary|deductible|insurance\s+certificate|renewal\s+date|policy\s+holder)\b/.test(lower)
+  ) return 'insurance';
 
   // Strong signals for liabilities
   if (
@@ -261,6 +270,77 @@ function parseLiabilityStatement(text) {
   return { import_type: 'liabilities', records };
 }
 
+/**
+ * Parse an insurance document into insurance plan records.
+ */
+function parseInsuranceDocument(text) {
+  const institution = extractInstitution(text);
+
+  const nameMatch = text.match(
+    /(?:policy\s+(?:name|type)|coverage\s+type|plan\s+name|product\s+name)[:\s]+([A-Za-z0-9 \-]+)/i
+  );
+  const name = nameMatch ? nameMatch[1].trim() : `${institution} Insurance`;
+
+  const policyNumMatch = text.match(/policy\s+(?:number|no\.?|#)[:\s]+([A-Z0-9\-]+)/i);
+  const premiumMatch = text.match(
+    /(?:premium|payment)[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/i
+  );
+  const coverageMatch = text.match(
+    /(?:coverage|face\s+value|sum\s+assured|benefit\s+amount)[:\s]+\$?\s*([\d,]+(?:\.\d{1,2})?)/i
+  );
+  const startMatch = text.match(
+    /(?:effective\s+date|start\s+date|policy\s+start)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+  );
+  const endMatch = text.match(
+    /(?:expiry\s+date|expiration\s+date|end\s+date|policy\s+end)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+  );
+  const renewalMatch = text.match(
+    /(?:renewal\s+date|renews\s+on)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
+  );
+
+  const lowerText = text.toLowerCase();
+  let type = 'other';
+  if (/\bterm\s+life\b/.test(lowerText)) type = 'term_life';
+  else if (/\bwhole\s+life\b|\blife\s+insurance\b/.test(lowerText)) type = 'life';
+  else if (/\bhealth\b/.test(lowerText)) type = 'health';
+  else if (/\bdental\b/.test(lowerText)) type = 'dental';
+  else if (/\bvision\b/.test(lowerText)) type = 'vision';
+  else if (/\bauto\b|\bvehicle\b|\bcar\s+insurance\b/.test(lowerText)) type = 'auto';
+  else if (/\bhome\s+insurance\b|\bhomeowner\b/.test(lowerText)) type = 'home';
+  else if (/\brenters?\b/.test(lowerText)) type = 'renters';
+  else if (/\bdisability\b/.test(lowerText)) type = 'disability';
+  else if (/\btravel\b/.test(lowerText)) type = 'travel';
+  else if (/\bpet\b/.test(lowerText)) type = 'pet';
+  else if (/\bumbrella\b/.test(lowerText)) type = 'umbrella';
+  else if (/\bbusiness\b/.test(lowerText)) type = 'business';
+
+  const normalizeDate = (s) => {
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const parts = s.split(/[\/\-]/);
+    if (parts.length !== 3) return null;
+    const [m, d, y] = parts;
+    const year = y.length === 2 ? `20${y}` : y;
+    return `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  };
+
+  const record = {
+    name,
+    provider: institution !== 'Unknown Institution' ? institution : null,
+    type,
+    policy_number: policyNumMatch ? policyNumMatch[1].trim() : null,
+    premium_amount: premiumMatch ? parseFloat(premiumMatch[1].replace(/,/g, '')) : null,
+    premium_frequency: 'monthly',
+    coverage_amount: coverageMatch ? parseFloat(coverageMatch[1].replace(/,/g, '')) : null,
+    start_date: normalizeDate(startMatch ? startMatch[1] : null),
+    end_date: normalizeDate(endMatch ? endMatch[1] : null),
+    renewal_date: normalizeDate(renewalMatch ? renewalMatch[1] : null),
+    notes: null,
+  };
+
+  return { import_type: 'insurance', records: [record] };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -290,7 +370,9 @@ async function parseStatement(text, options = {}) {
   const result =
     stmtType === 'liabilities'
       ? parseLiabilityStatement(text)
-      : parseBankStatement(text);
+      : stmtType === 'insurance'
+        ? parseInsuranceDocument(text)
+        : parseBankStatement(text);
 
   return { ...result, method: 'pattern', raw_preview };
 }

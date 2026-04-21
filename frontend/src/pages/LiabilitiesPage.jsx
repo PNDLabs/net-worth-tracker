@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, formatPct, typeLabel } from '../hooks/format';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const LIABILITY_TYPES = ['mortgage', 'auto', 'student', 'personal', 'credit_card', 'heloc', 'other'];
 const EMPTY = { name: '', lender: '', type: 'other', original_principal: '', current_balance: '', interest_rate: '', minimum_payment: '', notes: '' };
@@ -15,6 +16,8 @@ export default function LiabilitiesPage() {
 
   const load = () => api.getLiabilities().then(setItems).catch(e => setError(e.message)).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
+  const { currency } = useCurrency();
+  const fmt = (v) => formatCurrency(v, currency);
 
   function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); setError(''); }
   function openEdit(l) {
@@ -52,7 +55,7 @@ export default function LiabilitiesPage() {
   return (
     <div>
       <div className="page-header">
-        <h2>Liabilities <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-muted)' }}>Total: <strong style={{ color: 'var(--color-danger)' }}>{formatCurrency(total)}</strong></span></h2>
+        <h2>Liabilities <span style={{ fontSize: 14, fontWeight: 400, color: 'var(--color-text-muted)' }}>Total: <strong style={{ color: 'var(--color-danger)' }}>{fmt(total)}</strong></span></h2>
         <button className="btn-primary" onClick={openCreate}>+ Add Liability</button>
       </div>
 
@@ -86,10 +89,10 @@ export default function LiabilitiesPage() {
                       <td><strong>{l.name}</strong>{l.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{l.notes}</div>}</td>
                       <td>{l.lender || '—'}</td>
                       <td><span className={`badge badge-${l.type}`}>{typeLabel(l.type)}</span></td>
-                      <td style={{ textAlign: 'right' }}>{l.original_principal != null ? formatCurrency(l.original_principal) : '—'}</td>
-                      <td style={{ textAlign: 'right' }} className="amount negative">{formatCurrency(l.current_balance)}</td>
+                      <td style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
+                      <td style={{ textAlign: 'right' }} className="amount negative">{fmt(l.current_balance)}</td>
                       <td style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
-                      <td style={{ textAlign: 'right' }}>{l.minimum_payment != null ? formatCurrency(l.minimum_payment) : '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{l.minimum_payment != null ? fmt(l.minimum_payment) : '—'}</td>
                       <td style={{ textAlign: 'right' }}>{pct != null ? `${pct.toFixed(1)}%` : '—'}</td>
                       <td>
                         <div className="flex-gap">

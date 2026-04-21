@@ -5,6 +5,7 @@ const IMPORT_TYPES = [
   { value: 'accounts', label: 'Accounts (bank / investment)', icon: '🏦' },
   { value: 'assets', label: 'Assets (real estate, vehicles, etc.)', icon: '🏠' },
   { value: 'liabilities', label: 'Liabilities (loans, credit cards, etc.)', icon: '💳' },
+  { value: 'insurance', label: 'Insurance (policies, coverage)', icon: '🛡️' },
 ];
 
 const CSV_TEMPLATES = {
@@ -20,6 +21,10 @@ Bitcoin,crypto,,25000,30000`,
 Home Mortgage,Wells Fargo,mortgage,400000,375000,3.5,2100
 Car Loan,Toyota Finance,auto,28000,19500,4.9,450
 Credit Card,Chase,credit_card,,3200,19.99,96`,
+  insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes
+Life Insurance,Prudential,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,
+Health Plan,BlueCross,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,
+Auto Insurance,State Farm,auto,AU-456,120,monthly,100000,2024-06-01,2025-06-01,,`,
 };
 
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
@@ -95,10 +100,9 @@ export default function ImportPage({ onRefresh }) {
   const [importType, setImportType] = useState('accounts');
   const [csvFile, setCsvFile] = useState(null);
   const [jsonText, setJsonText] = useState('');
+  const [pasteText, setPasteText] = useState('');
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfPassword, setPdfPassword] = useState('');
-  const [aiApiKey, setAiApiKey] = useState('');
-  const [showAiKey, setShowAiKey] = useState(false);
   const [serverAiEnabled, setServerAiEnabled] = useState(false);
   const [pdfPreview, setPdfPreview] = useState(null);
   const [result, setResult] = useState(null);
@@ -140,12 +144,12 @@ export default function ImportPage({ onRefresh }) {
     if (!pdfFile) return setError('Please select a PDF file.');
     try {
       setLoading(true); setError(''); setResult(null); setPdfPreview(null);
-      const preview = await api.previewPdf(pdfFile, pdfPassword, aiApiKey);
+      const preview = await api.previewPdf(pdfFile, pdfPassword);
       if (!preview.records || preview.records.length === 0) {
         setError(
           'No financial records could be extracted from this PDF. ' +
           'Make sure the PDF contains selectable text (scanned/image-only PDFs are not supported). ' +
-          'Adding an AI API key can significantly improve accuracy for complex statement layouts.'
+          (serverAiEnabled ? '' : 'Enable AI parsing via AI_API_KEY in the server .env for better accuracy.')
         );
         return;
       }
@@ -162,12 +166,26 @@ export default function ImportPage({ onRefresh }) {
   async function confirmPdfImport(overrideType) {
     try {
       setLoading(true); setError('');
-      const res = await api.importPdf(pdfFile, pdfPassword, aiApiKey, overrideType);
+      const res = await api.importPdf(pdfFile, pdfPassword, overrideType);
       setResult(res);
       setPdfPreview(null);
       setPdfFile(null);
       setPdfPassword('');
       if (onRefresh) onRefresh();
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function importText() {
+    if (!pasteText.trim()) return setError('Please paste some text to import.');
+    try {
+      setLoading(true); setError(''); setResult(null); setPdfPreview(null);
+      const preview = await api.parseText(pasteText, importType);
+      if (!preview.records || preview.records.length === 0) {
+        setError('No financial records could be extracted from the text. Try adding more detail or use CSV/JSON import.');
+        return;
+      }
+      setPdfPreview({ ...preview, isText: true });
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -218,11 +236,22 @@ export default function ImportPage({ onRefresh }) {
             <div className="card mt-4">
               <div className="section-title">PDF Tips</div>
               <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
-                <li>Supports bank, investment, and loan statements</li>
+                <li>Supports bank, investment, loan, and insurance statements</li>
                 <li>Password-protected PDFs supported</li>
-                <li>Set <code>AI_API_KEY</code> in <code>.env</code> for AI parsing</li>
+                <li>Set <code>AI_API_KEY</code> in <code>.env</code> for best accuracy</li>
                 <li>Review the preview before importing</li>
                 <li>Scanned / image-only PDFs are not supported</li>
+              </ul>
+            </div>
+          )}
+
+          {tab === 'text' && (
+            <div className="card mt-4">
+              <div className="section-title">Text Import Tips</div>
+              <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
+                <li>Paste text from emails, statements, or any source</li>
+                <li>Works best with AI enabled (<code>AI_API_KEY</code> in <code>.env</code>)</li>
+                <li>Review the preview before confirming</li>
               </ul>
             </div>
           )}
@@ -232,7 +261,7 @@ export default function ImportPage({ onRefresh }) {
         <div>
           <div className="card" style={{ marginBottom: pdfPreview ? 16 : 0 }}>
             <div className="flex-gap mb-4" style={{ gap: 0, borderBottom: '1px solid var(--color-border)', marginBottom: 20 }}>
-              {['pdf', 'csv', 'json'].map((t) => (
+              {['pdf', 'text', 'csv', 'json'].map((t) => (
                 <button
                   key={t}
                   onClick={() => { setTab(t); setError(''); setResult(null); setPdfPreview(null); }}
@@ -243,10 +272,21 @@ export default function ImportPage({ onRefresh }) {
                     fontWeight: tab === t ? 700 : 400,
                   }}
                 >
-                  {t === 'pdf' ? '📄 PDF' : t.toUpperCase()}
+                  {t === 'pdf' ? '📄 PDF' : t === 'text' ? '📝 Text' : t.toUpperCase()}
                 </button>
               ))}
             </div>
+
+            {!serverAiEnabled && (tab === 'pdf' || tab === 'text') && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 12 }}>
+                💡 AI parsing is not configured. Set <code>AI_API_KEY</code> in the server <code>.env</code> file for smarter extraction.
+              </div>
+            )}
+            {serverAiEnabled && (tab === 'pdf' || tab === 'text') && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', marginBottom: 12 }}>
+                ✅ AI parsing enabled.
+              </div>
+            )}
 
             {error && <div className="error-msg">{error}</div>}
             {result && (
@@ -284,47 +324,26 @@ export default function ImportPage({ onRefresh }) {
                   </div>
                 </div>
 
-                <div className="form-group mb-4">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    🤖 AI API Key
-                    <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-muted)' }}>(optional – for more accurate parsing)</span>
-                    {!serverAiEnabled && (
-                      <button
-                        className="btn-ghost btn-sm"
-                        style={{ marginLeft: 'auto' }}
-                        onClick={() => setShowAiKey((v) => !v)}
-                        type="button"
-                      >
-                        {showAiKey ? 'Hide' : 'Show'}
-                      </button>
-                    )}
-                  </label>
-                  {serverAiEnabled ? (
-                    <div style={{
-                      padding: '8px 12px', borderRadius: 6, fontSize: 13,
-                      background: '#e8f5e9', color: '#2e7d32',
-                      border: '1px solid #a5d6a7',
-                    }}>
-                      ✅ AI parsing is enabled via server configuration.
-                    </div>
-                  ) : (
-                    <>
-                      <input
-                        type={showAiKey ? 'text' : 'password'}
-                        value={aiApiKey}
-                        onChange={(e) => setAiApiKey(e.target.value)}
-                        placeholder="sk-… (OpenAI or compatible API key)"
-                        autoComplete="off"
-                      />
-                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                        Key is sent only to your local backend server. Set <code>AI_API_KEY</code> in the backend <code>.env</code> file to enable AI automatically. Set <code>AI_API_URL</code> to use Ollama or other OpenAI-compatible providers.
-                      </span>
-                    </>
-                  )}
-                </div>
-
                 <button className="btn-primary" onClick={previewPdf} disabled={loading || !pdfFile}>
                   {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Parsing PDF…</> : '🔍 Parse & Preview'}
+                </button>
+              </>
+            )}
+
+            {tab === 'text' && (
+              <>
+                <div className="form-group mb-4">
+                  <label>Paste financial document text</label>
+                  <textarea
+                    rows={12}
+                    value={pasteText}
+                    onChange={(e) => { setPasteText(e.target.value); setPdfPreview(null); setResult(null); setError(''); }}
+                    placeholder="Paste text from a bank statement, insurance policy, investment report, or any financial document…"
+                    style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  />
+                </div>
+                <button className="btn-primary" onClick={importText} disabled={loading || !pasteText.trim()}>
+                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Parsing…</> : '🔍 Parse & Preview'}
                 </button>
               </>
             )}

@@ -8,6 +8,8 @@ const liabilitiesRouter = require('./routes/liabilities');
 const networthRouter = require('./routes/networth');
 const importRouter = require('./routes/importRoutes');
 const insuranceRouter = require('./routes/insurance');
+const settingsRouter = require('./routes/settings');
+const db = require('./db/database');
 
 // Standard limiter: 300 requests per minute for read/write endpoints
 const apiLimiter = rateLimit({
@@ -38,15 +40,23 @@ function createApp() {
   app.use('/api/liabilities', apiLimiter, liabilitiesRouter);
   app.use('/api/networth', apiLimiter, networthRouter);
   app.use('/api/insurance', apiLimiter, insuranceRouter);
+  app.use('/api/settings', apiLimiter, settingsRouter);
   app.use('/api/import', importLimiter, importRouter);
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-  // Server configuration (AI key availability, etc.)
+  // Server configuration (AI key availability, default currency, etc.)
   app.get('/api/config', (req, res) => {
+    const conn = db.getDb();
+    let defaultCurrency = 'USD';
+    try {
+      const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get('defaultCurrency');
+      if (row) defaultCurrency = JSON.parse(row.value);
+    } catch (_) { /* use default */ }
     res.json({
       aiEnabled: !!(process.env.AI_API_KEY || process.env.OPENAI_API_KEY),
+      defaultCurrency,
     });
   });
 
