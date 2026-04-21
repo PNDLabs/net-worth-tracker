@@ -26,11 +26,12 @@ const upload = multer({
  *   ?import_type=assets
  *   ?import_type=liabilities
  */
+const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance'];
+
 router.post('/csv', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const importType = req.query.import_type || 'accounts';
-  const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities'];
   if (!VALID_IMPORT_TYPES.includes(importType)) {
     return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
   }
@@ -99,6 +100,24 @@ router.post('/csv', upload.single('file'), (req, res) => {
         interest_rate != null ? Number(interest_rate) : null,
         minimum_payment != null ? Number(minimum_payment) : null
       );
+
+    } else if (importType === 'insurance') {
+      const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes } = row;
+      if (!name) throw new Error('name is required');
+      conn.prepare(
+        `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        String(name), provider ? String(provider) : null, String(type),
+        policy_number ? String(policy_number) : null,
+        premium_amount != null ? Number(premium_amount) : null,
+        String(premium_frequency),
+        coverage_amount != null ? Number(coverage_amount) : null,
+        start_date ? String(start_date) : null,
+        end_date ? String(end_date) : null,
+        renewal_date ? String(renewal_date) : null,
+        notes ? String(notes) : null
+      );
     }
   });
 
@@ -126,7 +145,6 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
     return res.status(400).json({ error: 'records must be a non-empty array' });
   }
 
-  const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities'];
   if (!VALID_IMPORT_TYPES.includes(importType)) {
     return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
   }
@@ -167,6 +185,23 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           Number(current_balance),
           interest_rate != null ? Number(interest_rate) : null,
           minimum_payment != null ? Number(minimum_payment) : null
+        );
+
+      } else if (importType === 'insurance') {
+        const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes } = row;
+        if (!name) throw new Error('name is required');
+        conn.prepare(
+          `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          String(name), provider ? String(provider) : null, String(type),
+          policy_number ? String(policy_number) : null,
+          premium_amount != null ? Number(premium_amount) : null,
+          String(premium_frequency),
+          coverage_amount != null ? Number(coverage_amount) : null,
+          start_date ? String(start_date) : null,
+          end_date ? String(end_date) : null,
+          renewal_date ? String(renewal_date) : null,
+          notes ? String(notes) : null
         );
       }
       results.imported++;
@@ -209,7 +244,6 @@ function validatePdfFile(req, res) {
  * Form fields:
  *   file        – PDF file (required)
  *   password    – PDF password (optional)
- *   ai_api_key  – override AI API key (optional; falls back to server env)
  */
 router.post('/pdf/preview', upload.single('file'), async (req, res) => {
   if (!validatePdfFile(req, res)) return;
@@ -220,10 +254,7 @@ router.post('/pdf/preview', upload.single('file'), async (req, res) => {
       return res.status(422).json({ error: 'Could not extract text from PDF. The file may be scanned/image-only.' });
     }
 
-    const options = {};
-    if (req.body.ai_api_key) options.apiKey = req.body.ai_api_key;
-
-    const result = await parseStatement(text, options);
+    const result = await parseStatement(text, {});
     res.json(result);
   } catch (err) {
     if (err.code === 'PASSWORD_REQUIRED') {
@@ -238,7 +269,7 @@ router.post('/pdf/preview', upload.single('file'), async (req, res) => {
  * POST /api/import/pdf
  * Parse and immediately import a PDF statement into the database.
  * Accepts same fields as /pdf/preview, plus:
- *   import_type – optional override ('accounts'|'assets'|'liabilities')
+ *   import_type – optional override ('accounts'|'assets'|'liabilities'|'insurance')
  */
 router.post('/pdf', upload.single('file'), async (req, res) => {
   if (!validatePdfFile(req, res)) return;
@@ -249,16 +280,12 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
       return res.status(422).json({ error: 'Could not extract text from PDF.' });
     }
 
-    const options = {};
-    if (req.body.ai_api_key) options.apiKey = req.body.ai_api_key;
-
-    const parsed = await parseStatement(text, options);
+    const parsed = await parseStatement(text, {});
 
     // Allow caller to override the detected import type
     const importType = req.body.import_type || parsed.import_type;
-    const VALID = ['accounts', 'assets', 'liabilities'];
-    if (!VALID.includes(importType)) {
-      return res.status(400).json({ error: `import_type must be one of: ${VALID.join(', ')}` });
+    if (!VALID_IMPORT_TYPES.includes(importType)) {
+      return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
     }
 
     const conn = db.getDb();
@@ -296,6 +323,22 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             interest_rate != null ? Number(interest_rate) : null,
             minimum_payment != null ? Number(minimum_payment) : null
           );
+        } else if (importType === 'insurance') {
+          const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes } = row;
+          if (!name) throw new Error('name is required');
+          conn.prepare(
+            `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            String(name), provider ? String(provider) : null, String(type),
+            policy_number ? String(policy_number) : null,
+            premium_amount != null ? Number(premium_amount) : null,
+            String(premium_frequency),
+            coverage_amount != null ? Number(coverage_amount) : null,
+            start_date ? String(start_date) : null,
+            end_date ? String(end_date) : null,
+            renewal_date ? String(renewal_date) : null,
+            notes ? String(notes) : null
+          );
         }
         results.imported++;
       } catch (err) {
@@ -311,6 +354,28 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     }
     console.error('PDF import error:', err);
     res.status(500).json({ error: `Failed to import PDF: ${err.message}` });
+  }
+});
+
+/**
+ * POST /api/import/text
+ * Parse raw text (pasted by the user) using AI and return a preview.
+ * Body: { text: string, import_type?: string }
+ * Returns same shape as /pdf/preview.
+ */
+router.post('/text', express.json({ limit: '2mb' }), async (req, res) => {
+  const { text, import_type: hintType } = req.body || {};
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'text is required and must be a non-empty string' });
+  }
+
+  try {
+    const options = hintType ? { hintType } : {};
+    const result = await parseStatement(text.trim(), options);
+    res.json(result);
+  } catch (err) {
+    console.error('Text import error:', err);
+    res.status(500).json({ error: `Failed to parse text: ${err.message}` });
   }
 });
 

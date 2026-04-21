@@ -6,6 +6,7 @@ import LiabilitiesPage from './pages/LiabilitiesPage';
 import InsurancePage from './pages/InsurancePage';
 import HistoryPage from './pages/HistoryPage';
 import ImportPage from './pages/ImportPage';
+import { CurrencyProvider, useCurrency } from './hooks/CurrencyContext';
 
 const NAV_ITEMS = [
   { id: 'dashboard',    label: 'Dashboard',    icon: '📊' },
@@ -27,10 +28,57 @@ const PAGES = {
   import:      ImportPage,
 };
 
-export default function App() {
+const COMMON_CURRENCIES = [
+  'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CNY', 'INR', 'BRL', 'MXN',
+  'SGD', 'HKD', 'CHF', 'KRW', 'NOK', 'SEK', 'DKK', 'NZD', 'ZAR', 'AED',
+  'SAR', 'TRY', 'RUB', 'PLN', 'THB', 'IDR', 'MYR', 'PHP', 'TWD', 'NGN',
+];
+
+function CurrencyModal({ onClose }) {
+  const { currency, setCurrency } = useCurrency();
+  const [input, setInput] = useState(currency);
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 360 }}>
+        <h3>⚙️ Currency Settings</h3>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 16 }}>
+          Choose the currency used throughout the app for display and default imports.
+        </p>
+        <div className="form-group mb-4">
+          <label>Default Currency</label>
+          <select value={input} onChange={(e) => setInput(e.target.value)}>
+            {COMMON_CURRENCIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group mb-4">
+          <label>Or enter a custom code</label>
+          <input
+            value={input}
+            maxLength={3}
+            style={{ textTransform: 'uppercase' }}
+            onChange={(e) => setInput(e.target.value.toUpperCase())}
+            placeholder="e.g. CHF"
+          />
+        </div>
+        <div className="modal-actions">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={() => { if (input.trim()) { setCurrency(input.trim()); } onClose(); }}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppInner() {
   const [page, setPage] = useState('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
+  const { currency } = useCurrency();
 
   const refresh = () => setRefreshKey((k) => k + 1);
   const PageComponent = PAGES[page];
@@ -74,11 +122,31 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <div style={{ borderTop: '1px solid var(--color-border)', padding: '12px 16px', marginTop: 'auto' }}>
+          <button
+            className="btn-ghost"
+            style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
+            onClick={() => setShowCurrencyModal(true)}
+          >
+            <span>⚙️</span>
+            <span>Currency: <strong>{currency}</strong></span>
+          </button>
+        </div>
       </aside>
 
       <main className="main-content">
         <PageComponent key={refreshKey} onRefresh={refresh} navigate={navigate} />
       </main>
+
+      {showCurrencyModal && <CurrencyModal onClose={() => setShowCurrencyModal(false)} />}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <CurrencyProvider>
+      <AppInner />
+    </CurrencyProvider>
   );
 }

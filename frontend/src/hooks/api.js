@@ -39,6 +39,10 @@ export const api = {
   updateInsurance: (id, data) => apiFetch(`/insurance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteInsurance: (id) => apiFetch(`/insurance/${id}`, { method: 'DELETE' }),
 
+  // Settings
+  getSettings: () => apiFetch('/settings'),
+  updateSettings: (data) => apiFetch('/settings', { method: 'PATCH', body: JSON.stringify(data) }),
+
   // Server config
   getConfig: () => apiFetch('/config'),
 
@@ -65,11 +69,10 @@ export const api = {
     return res.json();
   },
 
-  previewPdf: async (file, password, aiApiKey) => {
+  previewPdf: async (file, password) => {
     const formData = new FormData();
     formData.append('file', file);
     if (password) formData.append('password', password);
-    if (aiApiKey) formData.append('ai_api_key', aiApiKey);
     const res = await fetch(`${API_BASE}/import/pdf/preview`, { method: 'POST', body: formData });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -80,11 +83,10 @@ export const api = {
     return res.json();
   },
 
-  importPdf: async (file, password, aiApiKey, importType) => {
+  importPdf: async (file, password, importType) => {
     const formData = new FormData();
     formData.append('file', file);
     if (password) formData.append('password', password);
-    if (aiApiKey) formData.append('ai_api_key', aiApiKey);
     if (importType) formData.append('import_type', importType);
     const res = await fetch(`${API_BASE}/import/pdf`, { method: 'POST', body: formData });
     if (!res.ok) {
@@ -95,4 +97,10 @@ export const api = {
     }
     return res.json();
   },
+
+  parseText: (text, importType) =>
+    apiFetch('/import/text', {
+      method: 'POST',
+      body: JSON.stringify({ text, import_type: importType }),
+    }),
 };
