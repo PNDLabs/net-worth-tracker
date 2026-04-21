@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../hooks/api';
 import { formatCurrency, formatDate, formatPct } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
@@ -26,7 +26,7 @@ export default function SipPage() {
   const { currency } = useCurrency();
   const fmt = (v) => formatCurrency(v, currency);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [inst, summ, accs] = await Promise.all([
         api.getSipInstallments(filterSymbol ? { symbol: filterSymbol } : {}),
@@ -41,9 +41,9 @@ export default function SipPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterSymbol]);
 
-  useEffect(() => { load(); }, [filterSymbol]);
+  useEffect(() => { load(); }, [load]);
 
   function openCreate() {
     setEditing(null);

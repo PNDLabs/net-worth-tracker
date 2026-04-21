@@ -57,7 +57,7 @@ router.get('/growth', (req, res) => {
   ).get(entity_type, entity_id).cnt;
 
   const absoluteChange = latest.value - first.value;
-  const percentChange = first.value !== 0 ? (absoluteChange / Math.abs(first.value)) * 100 : null;
+  const percentChange = first.value !== 0 ? (absoluteChange / first.value) * 100 : null;
 
   res.json({
     entity_type,
