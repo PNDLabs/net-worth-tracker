@@ -7,7 +7,10 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 const ACCOUNT_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
 
 // Account types that can hold investment positions (stocks, mutual funds, etc.)
-const INVESTMENT_ACCOUNT_TYPES = new Set(['brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other']);
+// Includes global equivalents: money_market (money market funds), brokerage/demat accounts,
+// retirement plans (401k/IRA for US; pension/other for non-US regions like PPF, NPS, TFSA, RRSP).
+// Pure deposit types (checking, savings, cd/FD) are excluded.
+const INVESTMENT_ACCOUNT_TYPES = new Set(['money_market', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other']);
 
 const EMPTY_HOLDING = { symbol: '', name: '', shares: '', current_price: '', current_value: '' };
 
