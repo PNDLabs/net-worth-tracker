@@ -3,6 +3,7 @@ import Dashboard from './pages/Dashboard';
 import AccountsPage from './pages/AccountsPage';
 import AssetsPage from './pages/AssetsPage';
 import LiabilitiesPage from './pages/LiabilitiesPage';
+import InsurancePage from './pages/InsurancePage';
 import HistoryPage from './pages/HistoryPage';
 import ImportPage from './pages/ImportPage';
 
@@ -11,6 +12,7 @@ const NAV_ITEMS = [
   { id: 'accounts',     label: 'Accounts',     icon: '🏦' },
   { id: 'assets',       label: 'Assets',       icon: '🏠' },
   { id: 'liabilities',  label: 'Liabilities',  icon: '💳' },
+  { id: 'insurance',    label: 'Insurance',    icon: '🛡️' },
   { id: 'history',      label: 'History',      icon: '📈' },
   { id: 'import',       label: 'Import',       icon: '📥' },
 ];
@@ -20,6 +22,7 @@ const PAGES = {
   accounts:    AccountsPage,
   assets:      AssetsPage,
   liabilities: LiabilitiesPage,
+  insurance:   InsurancePage,
   history:     HistoryPage,
   import:      ImportPage,
 };

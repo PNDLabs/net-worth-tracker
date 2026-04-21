@@ -33,6 +33,15 @@ export const api = {
   updateLiability: (id, data) => apiFetch(`/liabilities/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteLiability: (id) => apiFetch(`/liabilities/${id}`, { method: 'DELETE' }),
 
+  // Insurance Plans
+  getInsurance: () => apiFetch('/insurance'),
+  createInsurance: (data) => apiFetch('/insurance', { method: 'POST', body: JSON.stringify(data) }),
+  updateInsurance: (id, data) => apiFetch(`/insurance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteInsurance: (id) => apiFetch(`/insurance/${id}`, { method: 'DELETE' }),
+
+  // Server config
+  getConfig: () => apiFetch('/config'),
+
   // Net Worth
   getNetWorth: () => apiFetch('/networth'),
   getSnapshots: () => apiFetch('/networth/snapshots'),

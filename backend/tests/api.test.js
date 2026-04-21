@@ -334,6 +334,105 @@ describe('Health endpoint', () => {
   });
 });
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+describe('Config endpoint', () => {
+  test('GET /api/config - returns aiEnabled false when no key set', async () => {
+    const saved = process.env.AI_API_KEY;
+    delete process.env.AI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body.aiEnabled).toBe(false);
+    if (saved !== undefined) process.env.AI_API_KEY = saved;
+  });
+
+  test('GET /api/config - returns aiEnabled true when AI_API_KEY set', async () => {
+    process.env.AI_API_KEY = 'test-key';
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body.aiEnabled).toBe(true);
+    delete process.env.AI_API_KEY;
+  });
+});
+
+// ─── Insurance Plans ─────────────────────────────────────────────────────────
+
+describe('Insurance Plans API', () => {
+  test('GET /api/insurance - returns empty array initially', async () => {
+    const res = await request(app).get('/api/insurance');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  test('POST /api/insurance - creates a plan', async () => {
+    const res = await request(app).post('/api/insurance').send({
+      name: 'Life Insurance',
+      provider: 'Prudential',
+      type: 'life',
+      premium_amount: 200,
+      premium_frequency: 'monthly',
+      coverage_amount: 500000,
+      start_date: '2023-01-01',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe('Life Insurance');
+    expect(res.body.provider).toBe('Prudential');
+    expect(res.body.type).toBe('life');
+    expect(res.body.premium_amount).toBe(200);
+    expect(res.body.coverage_amount).toBe(500000);
+    expect(res.body.id).toBeDefined();
+  });
+
+  test('POST /api/insurance - rejects missing name', async () => {
+    const res = await request(app).post('/api/insurance').send({ type: 'health', premium_amount: 100 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/name/i);
+  });
+
+  test('POST /api/insurance - rejects invalid type', async () => {
+    const res = await request(app).post('/api/insurance').send({ name: 'X', type: 'invalid_type' });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/insurance - rejects invalid premium_frequency', async () => {
+    const res = await request(app).post('/api/insurance').send({ name: 'X', premium_frequency: 'weekly' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/insurance/:id - returns single plan', async () => {
+    const created = await request(app).post('/api/insurance').send({ name: 'Health Plan', type: 'health', premium_amount: 300 });
+    const res = await request(app).get(`/api/insurance/${created.body.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe('Health Plan');
+  });
+
+  test('GET /api/insurance/:id - 404 for unknown id', async () => {
+    const res = await request(app).get('/api/insurance/9999');
+    expect(res.status).toBe(404);
+  });
+
+  test('PUT /api/insurance/:id - updates premium amount', async () => {
+    const created = await request(app).post('/api/insurance').send({ name: 'Auto', type: 'auto', premium_amount: 100, premium_frequency: 'monthly' });
+    const res = await request(app).put(`/api/insurance/${created.body.id}`).send({ premium_amount: 120 });
+    expect(res.status).toBe(200);
+    expect(res.body.premium_amount).toBe(120);
+  });
+
+  test('DELETE /api/insurance/:id - deletes plan', async () => {
+    const created = await request(app).post('/api/insurance').send({ name: 'DeleteMe', type: 'other' });
+    const del = await request(app).delete(`/api/insurance/${created.body.id}`);
+    expect(del.status).toBe(200);
+    const get = await request(app).get(`/api/insurance/${created.body.id}`);
+    expect(get.status).toBe(404);
+  });
+
+  test('DELETE /api/insurance/:id - 404 for unknown id', async () => {
+    const res = await request(app).delete('/api/insurance/9999');
+    expect(res.status).toBe(404);
+  });
+});
+
 // ─── PDF Import ───────────────────────────────────────────────────────────────
 
 /**

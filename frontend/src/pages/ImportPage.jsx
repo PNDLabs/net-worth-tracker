@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '../hooks/api';
 
 const IMPORT_TYPES = [
@@ -99,11 +99,16 @@ export default function ImportPage({ onRefresh }) {
   const [pdfPassword, setPdfPassword] = useState('');
   const [aiApiKey, setAiApiKey] = useState('');
   const [showAiKey, setShowAiKey] = useState(false);
+  const [serverAiEnabled, setServerAiEnabled] = useState(false);
   const [pdfPreview, setPdfPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('pdf');
+
+  useEffect(() => {
+    api.getConfig().then((cfg) => setServerAiEnabled(!!cfg.aiEnabled)).catch(() => {});
+  }, []);
 
   async function importCsv() {
     if (!csvFile) return setError('Please select a CSV file.');
@@ -215,7 +220,7 @@ export default function ImportPage({ onRefresh }) {
               <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
                 <li>Supports bank, investment, and loan statements</li>
                 <li>Password-protected PDFs supported</li>
-                <li>Add an AI key for higher accuracy</li>
+                <li>Set <code>AI_API_KEY</code> in <code>.env</code> for AI parsing</li>
                 <li>Review the preview before importing</li>
                 <li>Scanned / image-only PDFs are not supported</li>
               </ul>
@@ -283,25 +288,39 @@ export default function ImportPage({ onRefresh }) {
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     🤖 AI API Key
                     <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-muted)' }}>(optional – for more accurate parsing)</span>
-                    <button
-                      className="btn-ghost btn-sm"
-                      style={{ marginLeft: 'auto' }}
-                      onClick={() => setShowAiKey((v) => !v)}
-                      type="button"
-                    >
-                      {showAiKey ? 'Hide' : 'Show'}
-                    </button>
+                    {!serverAiEnabled && (
+                      <button
+                        className="btn-ghost btn-sm"
+                        style={{ marginLeft: 'auto' }}
+                        onClick={() => setShowAiKey((v) => !v)}
+                        type="button"
+                      >
+                        {showAiKey ? 'Hide' : 'Show'}
+                      </button>
+                    )}
                   </label>
-                  <input
-                    type={showAiKey ? 'text' : 'password'}
-                    value={aiApiKey}
-                    onChange={(e) => setAiApiKey(e.target.value)}
-                    placeholder="sk-… (OpenAI or compatible API key)"
-                    autoComplete="off"
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                    Key is sent only to your local backend server. Set <code>AI_API_URL</code> in the backend <code>.env</code> file to use Ollama or other OpenAI-compatible providers instead of OpenAI.
-                  </span>
+                  {serverAiEnabled ? (
+                    <div style={{
+                      padding: '8px 12px', borderRadius: 6, fontSize: 13,
+                      background: '#e8f5e9', color: '#2e7d32',
+                      border: '1px solid #a5d6a7',
+                    }}>
+                      ✅ AI parsing is enabled via server configuration.
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type={showAiKey ? 'text' : 'password'}
+                        value={aiApiKey}
+                        onChange={(e) => setAiApiKey(e.target.value)}
+                        placeholder="sk-… (OpenAI or compatible API key)"
+                        autoComplete="off"
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        Key is sent only to your local backend server. Set <code>AI_API_KEY</code> in the backend <code>.env</code> file to enable AI automatically. Set <code>AI_API_URL</code> to use Ollama or other OpenAI-compatible providers.
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 <button className="btn-primary" onClick={previewPdf} disabled={loading || !pdfFile}>
