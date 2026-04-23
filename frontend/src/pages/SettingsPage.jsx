@@ -11,9 +11,10 @@
  * and model.  These are stored securely via @capacitor/preferences.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { api } from '../hooks/apiAdapter';
+import { APP_VERSION } from '../version';
 
 const isNative = typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
 
@@ -32,6 +33,12 @@ export default function SettingsPage() {
 
   // Web state
   const [webConfig, setWebConfig] = useState(null);
+
+  // Export / import state
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importStats, setImportStats] = useState(null);
+  const importFileRef = useRef(null);
 
   useEffect(() => {
     if (isNative) {
@@ -70,6 +77,55 @@ export default function SettingsPage() {
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function handleExport() {
+    try {
+      setExporting(true);
+      setError('');
+      const payload = await api.exportData();
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href     = url;
+      a.download = `networth-export-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMsg('Data exported successfully.');
+      setTimeout(() => setMsg(''), 4000);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset file input so the same file can be re-selected
+    e.target.value = '';
+
+    try {
+      setImporting(true);
+      setError('');
+      setImportStats(null);
+
+      const text    = await file.text();
+      const payload = JSON.parse(text);
+      const result  = await api.importFullData(payload);
+      setImportStats(result.stats ?? result);
+      setMsg('Data imported successfully.');
+      setTimeout(() => setMsg(''), 5000);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -172,6 +228,73 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Export / Import ── */}
+      <div className="card" style={{ maxWidth: 540 }}>
+        <div className="section-title">📦 Data Export &amp; Import</div>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 16 }}>
+          Export all your data to a JSON file to back it up or transfer it to another device.
+          Import a previously exported file to restore or merge data.
+        </p>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+          <button className="btn-primary" onClick={handleExport} disabled={exporting}>
+            {exporting
+              ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Exporting…</>
+              : '📤 Export Data'}
+          </button>
+
+          <button
+            className="btn-ghost"
+            onClick={() => importFileRef.current?.click()}
+            disabled={importing}
+          >
+            {importing
+              ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</>
+              : '📥 Import Data'}
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={handleImportFile}
+          />
+        </div>
+
+        {importStats && (
+          <div style={{ background: 'var(--color-surface-2)', borderRadius: 6, padding: '10px 14px', fontSize: 13 }}>
+            <strong>Import results:</strong>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', paddingBottom: 4, color: 'var(--color-text-muted)', fontWeight: 500 }}>Table</th>
+                  <th style={{ textAlign: 'right', paddingBottom: 4, color: 'var(--color-text-muted)', fontWeight: 500 }}>Imported</th>
+                  <th style={{ textAlign: 'right', paddingBottom: 4, color: 'var(--color-text-muted)', fontWeight: 500 }}>Skipped</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(importStats).map(([table, s]) => (
+                  <tr key={table}>
+                    <td style={{ paddingTop: 2 }}>{table}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--color-success)' }}>{s.imported ?? '—'}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--color-text-muted)' }}>{s.skipped ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── About / Version ── */}
+      <div className="card" style={{ maxWidth: 540 }}>
+        <div className="section-title">ℹ️ About</div>
+        <div style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
+          <p style={{ margin: '0 0 4px' }}>Net Worth Tracker</p>
+          <p style={{ margin: 0 }}>Version <strong>{APP_VERSION}</strong></p>
+        </div>
+      </div>
     </div>
   );
 }

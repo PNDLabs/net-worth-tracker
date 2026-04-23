@@ -7,6 +7,7 @@ const assetsRouter = require('./routes/assets');
 const liabilitiesRouter = require('./routes/liabilities');
 const networthRouter = require('./routes/networth');
 const importRouter = require('./routes/importRoutes');
+const exportRouter = require('./routes/exportRoutes');
 const insuranceRouter = require('./routes/insurance');
 const settingsRouter = require('./routes/settings');
 const valueHistoryRouter = require('./routes/valueHistory');
@@ -46,6 +47,7 @@ function createApp() {
   app.use('/api/value-history', apiLimiter, valueHistoryRouter);
   app.use('/api/sip', apiLimiter, sipRouter);
   app.use('/api/import', importLimiter, importRouter);
+  app.use('/api/export', apiLimiter, exportRouter);
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

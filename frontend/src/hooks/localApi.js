@@ -18,6 +18,7 @@ import * as nwSvc       from '../db/networthService';
 import * as vhSvc       from '../db/valueHistoryService';
 import * as settingsSvc from '../db/settingsService';
 import * as importSvc   from '../db/importService';
+import * as exportSvc   from '../db/exportService';
 import { getAiSettings, isAiEnabled, saveAiSettings } from './aiSettings';
 import { parseStatement } from './statementParser';
 
@@ -104,4 +105,8 @@ export const api = {
     const options = aiConfig.apiKey ? aiConfig : {};
     return parseStatement(text, options);
   },
+
+  // Export / import full data
+  exportData: () => exportSvc.exportAllData(),
+  importFullData: (payload) => exportSvc.importAllData(payload),
 };
