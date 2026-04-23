@@ -98,11 +98,12 @@ export const api = {
     return res.json();
   },
 
-  importPdf: async (file, password, importType) => {
+  importPdf: async (file, password, importType, previewedRecords) => {
     const formData = new FormData();
     formData.append('file', file);
     if (password) formData.append('password', password);
     if (importType) formData.append('import_type', importType);
+    if (previewedRecords) formData.append('previewed_records', JSON.stringify(previewedRecords));
     const res = await fetch(`${API_BASE}/import/pdf`, { method: 'POST', body: formData });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

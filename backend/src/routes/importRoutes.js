@@ -346,18 +346,42 @@ router.post('/pdf/preview', upload.single('file'), async (req, res) => {
  * POST /api/import/pdf
  * Parse and immediately import a PDF statement into the database.
  * Accepts same fields as /pdf/preview, plus:
- *   import_type – optional override ('accounts'|'assets'|'liabilities'|'insurance')
+ *   import_type       – optional override ('accounts'|'assets'|'liabilities'|'insurance'|'sip')
+ *   previewed_records – optional JSON string of pre-parsed records from /pdf/preview.
+ *                       When provided the PDF is not re-parsed, preventing drift between
+ *                       what the user reviewed and what is actually written to the DB.
  */
 router.post('/pdf', upload.single('file'), async (req, res) => {
   if (!validatePdfFile(req, res)) return;
 
   try {
-    const text = await extractPdfText(req.file.buffer, req.body.password || '');
-    if (!text.trim()) {
-      return res.status(422).json({ error: 'Could not extract text from PDF.' });
-    }
+    let parsed;
 
-    const parsed = await parseStatement(text, {});
+    // If the client supplies pre-parsed records (from the /pdf/preview step) use them
+    // directly so the user always gets exactly what they reviewed imported into the DB.
+    if (req.body.previewed_records) {
+      let previewedRecords;
+      try {
+        previewedRecords = JSON.parse(req.body.previewed_records);
+      } catch {
+        return res.status(400).json({ error: 'previewed_records must be a valid JSON array string' });
+      }
+      if (!Array.isArray(previewedRecords)) {
+        return res.status(400).json({ error: 'previewed_records must be a JSON array' });
+      }
+      parsed = {
+        import_type: req.body.import_type || 'accounts',
+        records: previewedRecords,
+        method: 'preview',
+      };
+    } else {
+      // Re-parse from the PDF (legacy path / direct API calls without a prior preview)
+      const text = await extractPdfText(req.file.buffer, req.body.password || '');
+      if (!text.trim()) {
+        return res.status(422).json({ error: 'Could not extract text from PDF.' });
+      }
+      parsed = await parseStatement(text, {});
+    }
 
     // Allow caller to override the detected import type
     const importType = req.body.import_type || parsed.import_type;
