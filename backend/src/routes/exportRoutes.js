@@ -115,6 +115,8 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
     );
     for (const [key, value] of Object.entries(data.settings || {})) {
+      // Export payload stores parsed values; re-encode with JSON.stringify to match
+      // the backend's settings storage convention (PATCH handler also JSON.stringifies).
       upsertSetting.run(String(key), JSON.stringify(value));
       stats.settings.imported++;
     }

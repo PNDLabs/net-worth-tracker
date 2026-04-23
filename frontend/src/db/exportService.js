@@ -105,7 +105,7 @@ export async function importAllData(payload) {
     assets:          { imported: 0, skipped: 0 },
     liabilities:     { imported: 0, skipped: 0 },
     insurance_plans: { imported: 0, skipped: 0 },
-    sip_installments:{ imported: 0, skipped: 0 },
+    sip_installments: { imported: 0, skipped: 0 },
     value_history:   { imported: 0, skipped: 0 },
     settings:        { imported: 0, skipped: 0 },
   };
