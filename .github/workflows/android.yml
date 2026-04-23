@@ -57,6 +57,10 @@ jobs:
         run: npm run build
 
       # ── Capacitor sync ────────────────────────────────────────────────────────
+      - name: Add Android platform (initialises frontend/android project)
+        working-directory: frontend
+        run: npx cap add android
+
       - name: Capacitor sync (copy web assets into Android project)
         working-directory: frontend
         run: npx cap sync android
