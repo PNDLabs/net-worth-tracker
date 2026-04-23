@@ -35,11 +35,12 @@ HDFC Mid-Cap Opportunities SIP,,5000,,,2025-01-15,`,
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
 function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [importType, setImportType] = useState(preview.import_type);
+  const validationNotes = preview.validation_notes || [];
 
   if (!preview) return null;
   return (
     <div className="card">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 20 }}>🔍</span>
         <strong style={{ fontSize: 16 }}>Preview — {preview.records.length} record(s) detected</strong>
         <span style={{
@@ -49,6 +50,14 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         }}>
           {preview.method === 'ai' ? '🤖 AI-parsed' : '🔎 Pattern-parsed'}
         </span>
+        {preview.method === 'ai' && validationNotes.length > 0 && (
+          <span style={{
+            padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+            background: '#e3f2fd', color: '#1565c0',
+          }}>
+            ✏️ AI refined {validationNotes.length} {validationNotes.length !== 1 ? 'changes' : 'change'}
+          </span>
+        )}
       </div>
 
       <div className="form-group mb-4" style={{ maxWidth: 320 }}>
@@ -87,6 +96,17 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
           <pre style={{ fontSize: 11, background: 'var(--color-surface-2)', padding: 10, borderRadius: 6, overflow: 'auto', maxHeight: 200, whiteSpace: 'pre-wrap', border: '1px solid var(--color-border)', marginTop: 8 }}>
             {preview.raw_preview}
           </pre>
+        </details>
+      )}
+
+      {validationNotes.length > 0 && (
+        <details style={{ marginBottom: 16 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: '#1565c0' }}>
+            ✏️ AI refinements ({validationNotes.length})
+          </summary>
+          <ul style={{ fontSize: 12, marginTop: 8, paddingLeft: 20, lineHeight: 1.8, color: 'var(--color-text-muted)' }}>
+            {validationNotes.map((note, i) => <li key={i}>{note}</li>)}
+          </ul>
         </details>
       )}
 
@@ -171,7 +191,7 @@ export default function ImportPage({ onRefresh }) {
   async function confirmPdfImport(overrideType) {
     try {
       setLoading(true); setError('');
-      const res = await api.importPdf(pdfFile, pdfPassword, overrideType);
+      const res = await api.importPdf(pdfFile, pdfPassword, overrideType, pdfPreview?.records);
       setResult(res);
       setPdfPreview(null);
       setPdfFile(null);

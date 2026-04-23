@@ -472,6 +472,8 @@ describe('PDF Import API', () => {
     expect(res.body.records.length).toBeGreaterThan(0);
     expect(res.body.records[0].balance).toBeCloseTo(12345.67, 0);
     expect(res.body.method).toBe('pattern');
+    // 2-pass: validation_notes always present
+    expect(Array.isArray(res.body.validation_notes)).toBe(true);
   });
 
   test('POST /api/import/pdf/preview - parses loan statement PDF', async () => {
@@ -484,6 +486,7 @@ describe('PDF Import API', () => {
     expect(res.body.import_type).toBe('liabilities');
     expect(res.body.records[0].current_balance).toBeCloseTo(320000, 0);
     expect(res.body.records[0].interest_rate).toBeCloseTo(4.5, 1);
+    expect(Array.isArray(res.body.validation_notes)).toBe(true);
   });
 
   test('POST /api/import/pdf/preview - rejects missing file', async () => {
@@ -502,6 +505,49 @@ describe('PDF Import API', () => {
 
     const list = await request(app).get('/api/accounts');
     expect(list.body.length).toBeGreaterThan(0);
+  });
+
+  test('POST /api/import/pdf - imports using pre-parsed previewed_records', async () => {
+    const pdfBuf = makePdf('Some Bank  Ending Balance: $9,999.00');
+    const previewedRecords = [
+      { name: 'My Savings', institution: 'Some Bank', type: 'savings', currency: 'USD', balance: 9999 },
+    ];
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', pdfBuf, { filename: 'some.pdf', contentType: 'application/pdf' })
+      .field('import_type', 'accounts')
+      .field('previewed_records', JSON.stringify(previewedRecords));
+
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.method).toBe('preview');
+
+    const list = await request(app).get('/api/accounts');
+    const acct = list.body.find((a) => a.name === 'My Savings');
+    expect(acct).toBeDefined();
+    expect(acct.balance).toBe(9999);
+  });
+
+  test('POST /api/import/pdf - rejects invalid previewed_records JSON', async () => {
+    const pdfBuf = makePdf('Any Bank  Ending Balance: $1,000.00');
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', pdfBuf, { filename: 'any.pdf', contentType: 'application/pdf' })
+      .field('import_type', 'accounts')
+      .field('previewed_records', 'not-valid-json');
+
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/import/pdf - rejects previewed_records without import_type', async () => {
+    const pdfBuf = makePdf('Any Bank  Ending Balance: $1,000.00');
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', pdfBuf, { filename: 'any.pdf', contentType: 'application/pdf' })
+      .field('previewed_records', JSON.stringify([{ name: 'Test', type: 'savings', balance: 100 }]));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/import_type/i);
   });
 
   test('POST /api/import/pdf - rejects missing file', async () => {
@@ -524,6 +570,7 @@ describe('PDF Import API', () => {
     expect(res.body.records[0].units).toBeCloseTo(26.286, 2);
     expect(res.body.records[0].nav).toBeCloseTo(190.25, 1);
     expect(res.body.method).toBe('pattern');
+    expect(Array.isArray(res.body.validation_notes)).toBe(true);
   });
 
   test('POST /api/import/pdf - imports SIP from PDF into DB', async () => {

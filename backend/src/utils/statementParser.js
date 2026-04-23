@@ -87,7 +87,7 @@ async function parseWithAI(text, options = {}) {
         { role: 'user', content: truncated },
       ],
       temperature: 0,
-      max_tokens: 2048,
+      max_tokens: 4096,
     }),
   });
 
@@ -102,6 +102,83 @@ async function parseWithAI(text, options = {}) {
 
   const parsed = JSON.parse(content);
   if (!parsed.records) throw new Error('AI response missing records field');
+  return parsed;
+}
+
+// ─── AI Validation (Pass 2) ───────────────────────────────────────────────────
+
+const AI_VALIDATION_PROMPT = `You are a financial data validator. You will receive:
+1. Raw text extracted from a financial document.
+2. An initial JSON extraction produced by a previous parsing pass.
+
+Your task is to cross-check every field in the initial extraction against the raw text, then return a corrected and completed result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON object:
+{
+  "import_type": "<accounts|assets|liabilities|insurance|sip>",
+  "records": [ ... ],
+  "validation_notes": [ "<string describing each correction or addition>" ]
+}
+
+Rules:
+- Use the same record schemas as the initial extraction (same field names and types).
+- Preserve the import_type from the initial extraction exactly as provided; do not change, infer, or reclassify it during validation.
+- Add any records that are clearly present in the raw text but were missed in the initial extraction.
+- Correct any field values that do not match what is stated in the raw text.
+- Fill in null fields where the value is clearly present in the raw text.
+- Remove records that have no basis in the raw text.
+- validation_notes must be an array of short human-readable strings, one entry per change made. If no changes were needed, return an empty array [].
+- Convert all monetary values to plain positive numbers (no $ or ₹ signs, no commas, no negative signs).
+- Liabilities current_balance must always be a positive number.
+- Return ONLY the JSON, nothing else.`;
+
+/**
+ * Pass 2: validate and refine an initial extraction against the source text.
+ *
+ * @param {string} text           – full document text (truncated to MAX_AI_INPUT_CHARS)
+ * @param {object} initialResult  – { import_type, records } from Pass 1
+ * @param {object} options        – same AI options as parseWithAI
+ * @returns {Promise<{ import_type, records, validation_notes }|null>}
+ */
+async function validateAndRefineWithAI(text, initialResult, options = {}) {
+  const apiKey = options.apiKey || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const apiUrl = options.apiUrl || process.env.AI_API_URL || 'https://api.openai.com/v1';
+  const model = options.model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+  const truncated = text.slice(0, MAX_AI_INPUT_CHARS);
+  const userMessage =
+    `RAW TEXT:\n${truncated}\n\n` +
+    `INITIAL EXTRACTION:\n${JSON.stringify(initialResult, null, 2)}`;
+
+  const response = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: AI_VALIDATION_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI validation API error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI validation returned empty response');
+
+  const parsed = JSON.parse(content);
+  if (!parsed.records) throw new Error('AI validation response missing records field');
+  if (!Array.isArray(parsed.validation_notes)) parsed.validation_notes = [];
   return parsed;
 }
 
@@ -539,9 +616,14 @@ function parseCasStatement(text) {
 /**
  * Parse extracted PDF text into structured financial records.
  *
+ * Flow:
+ *   Pass 1 – AI extraction (parseWithAI)          [when AI key available]
+ *   Pass 2 – AI validation & refinement           [when Pass 1 succeeded]
+ *   Fallback – pattern-based parser               [when AI unavailable or Pass 1 returned 0 records]
+ *
  * @param {string} text     – full PDF text
  * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern }
- * @returns {Promise<{ import_type, records, method, raw_preview }>}
+ * @returns {Promise<{ import_type, records, method, raw_preview, validation_notes }>}
  */
 async function parseStatement(text, options = {}) {
   const raw_preview = text.slice(0, 2000);
@@ -551,7 +633,31 @@ async function parseStatement(text, options = {}) {
     try {
       const aiResult = await parseWithAI(text, options);
       if (aiResult && Array.isArray(aiResult.records) && aiResult.records.length > 0) {
-        return { ...aiResult, method: 'ai', raw_preview };
+        // Pass 2: validate and refine the initial extraction
+        try {
+          const refined = await validateAndRefineWithAI(text, aiResult, options);
+          // Only accept the refined result if it returned at least as many records as Pass 1,
+          // the import_type is consistent, and the records are well-formed.
+          // This prevents the validator from accidentally discarding valid records or
+          // silently switching to a different entity type.
+          if (
+            refined &&
+            Array.isArray(refined.records) &&
+            refined.records.length >= aiResult.records.length &&
+            refined.import_type === aiResult.import_type
+          ) {
+            return {
+              import_type: refined.import_type,
+              records: refined.records,
+              method: 'ai',
+              raw_preview,
+              validation_notes: refined.validation_notes,
+            };
+          }
+        } catch (_validateErr) {
+          // Validation pass failed — use Pass 1 result as-is
+        }
+        return { ...aiResult, method: 'ai', raw_preview, validation_notes: [] };
       }
     } catch (_err) {
       // AI failed — fall through to pattern parser silently
@@ -571,7 +677,7 @@ async function parseStatement(text, options = {}) {
             ? parseInsuranceDocument(text)
             : parseBankStatement(text);
 
-  return { ...result, method: 'pattern', raw_preview };
+  return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }
 
 module.exports = { parseStatement, detectStatementType, parseCasStatement };
