@@ -194,6 +194,44 @@ name,lender,type,original_principal,current_balance,interest_rate,minimum_paymen
 Home Mortgage,Wells Fargo,mortgage,400000,375000,3.5,2100
 ```
 
+## Android APK
+
+The CI workflow (`.github/workflows/android.yml`) automatically builds an Android APK on every push to `main` and on every `v*` tag.
+
+| Trigger | Artifact | Signed? |
+|---------|----------|---------|
+| Push to `main` / PR | `net-worth-tracker-debug-<sha>` (`app-debug.apk`) | ✅ debug key |
+| `v*` tag | `net-worth-tracker-release-<tag>` (`app-release.apk`) | ✅ release key (via secrets) |
+
+The debug APK is signed with the Android debug keystore and can be sideloaded immediately (enable **Install unknown apps** for your file manager or browser in Android settings).
+
+### Setting up release signing (required for tag builds)
+
+Generate a release keystore **once** on your local machine and store it as repository secrets:
+
+```bash
+# 1. Generate keystore
+keytool -genkey -v -keystore release.keystore \
+  -alias net-worth-tracker -keyalg RSA -keysize 2048 -validity 10000
+
+# 2. Base64-encode it (copy the output)
+#    Linux:
+base64 -w 0 release.keystore
+#    macOS:
+base64 -i release.keystore
+```
+
+Then add the following **Actions secrets** under *Settings → Secrets and variables → Actions*:
+
+| Secret name | Value |
+|-------------|-------|
+| `KEYSTORE_BASE64` | Base64 output from the command above |
+| `KEYSTORE_PASSWORD` | Keystore store password |
+| `KEY_ALIAS` | `net-worth-tracker` (or the alias you chose) |
+| `KEY_PASSWORD` | Key password |
+
+> **Keep the keystore file safe.** If it is lost you cannot update a previously installed APK with the same signature — users would need to uninstall before reinstalling.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

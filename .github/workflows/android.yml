@@ -84,16 +84,43 @@ jobs:
           retention-days: 30
 
       # ── Release build (tags only) ─────────────────────────────────────────────
-      - name: Build release APK (unsigned)
+      # Requires four repository secrets:
+      #   KEYSTORE_BASE64    – base64-encoded release keystore file
+      #                        (generate: keytool -genkey -v -keystore release.keystore
+      #                                     -alias net-worth-tracker -keyalg RSA
+      #                                     -keysize 2048 -validity 10000
+      #                         encode:   base64 -w 0 release.keystore)
+      #   KEYSTORE_PASSWORD  – keystore store password
+      #   KEY_ALIAS          – key alias (e.g. net-worth-tracker)
+      #   KEY_PASSWORD       – key password
+      - name: Decode release keystore
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > /tmp/release.keystore
+
+      - name: Build signed release APK
         if: startsWith(github.ref, 'refs/tags/')
         working-directory: frontend/android
-        run: ./gradlew assembleRelease --no-daemon
+        env:
+          KEYSTORE_PATH: /tmp/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
-      - name: Upload unsigned release APK
+      - name: Remove release keystore from runner
+        if: always()
+        run: rm -f /tmp/release.keystore
+
+      - name: Upload signed release APK
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
-          name: net-worth-tracker-release-unsigned-${{ github.ref_name }}
-          path: frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          name: net-worth-tracker-release-${{ github.ref_name }}
+          path: frontend/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 90
