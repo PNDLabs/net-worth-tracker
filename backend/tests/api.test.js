@@ -239,6 +239,18 @@ describe('Net Worth API', () => {
     expect(res.body.netWorth).toBe(25000);
   });
 
+  test('GET /api/networth - includes SIP installments in totalAssets', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Bank', type: 'checking', balance: 10000 });
+    await request(app).post('/api/sip').send({ name: 'NIFTY SIP', symbol: 'NIFTYBEES', amount: 5000 });
+    await request(app).post('/api/sip').send({ name: 'NIFTY SIP', symbol: 'NIFTYBEES', amount: 3000 });
+
+    const res = await request(app).get('/api/networth');
+    expect(res.status).toBe(200);
+    expect(res.body.sipTotal).toBe(8000);
+    expect(res.body.totalAssets).toBe(18000);
+    expect(res.body.netWorth).toBe(18000);
+  });
+
   test('POST /api/networth/snapshots - creates a snapshot', async () => {
     await request(app).post('/api/accounts').send({ name: 'Bank', type: 'savings', balance: 50000 });
     const res = await request(app).post('/api/networth/snapshots').send({ notes: 'Monthly check' });
