@@ -146,12 +146,13 @@ export async function importCsv(importType, file) {
 /**
  * Preview a PDF: extract text then parse with AI/pattern matching.
  * Returns the same shape as the backend /api/import/pdf/preview.
+ * @param {object} [aiOptions] – { apiKey, apiUrl, model } passed to parseStatement
  */
-export async function previewPdf(file, password) {
+export async function previewPdf(file, password, aiOptions = {}) {
   const buf = await file.arrayBuffer();
   const text = await extractPdfText(buf, password);
   if (!text.trim()) throw new Error('Could not extract text from PDF. The file may be scanned/image-only.');
-  return parseStatement(text, {});
+  return parseStatement(text, aiOptions);
 }
 
 /**

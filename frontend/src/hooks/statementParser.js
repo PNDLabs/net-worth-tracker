@@ -156,6 +156,8 @@ function normalizeDate(s) {
   const mmmMatch = s.match(/^(\d{1,2})[-\s/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s/](\d{2,4})$/i);
   if (mmmMatch) {
     const MONTHS = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    // 2-digit years are assumed to be in the 2000s (e.g. "25" → "2025").
+    // Financial documents from before 2000 are out of scope for this parser.
     const year = mmmMatch[3].length === 2 ? `20${mmmMatch[3]}` : mmmMatch[3];
     const month = MONTHS[mmmMatch[2].toLowerCase()];
     return `${year}-${month}-${mmmMatch[1].padStart(2, '0')}`;
