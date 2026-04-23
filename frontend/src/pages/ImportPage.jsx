@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '../hooks/api';
+import { api } from '../hooks/apiAdapter';
 
 const IMPORT_TYPES = [
   { value: 'accounts', label: 'Accounts (bank / investment)', icon: '🏦' },

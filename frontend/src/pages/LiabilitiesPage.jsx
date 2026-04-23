@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../hooks/api';
+import { api } from '../hooks/apiAdapter';
 import { formatCurrency, formatDate, formatPct, typeLabel } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';

@@ -7,6 +7,7 @@ import InsurancePage from './pages/InsurancePage';
 import HistoryPage from './pages/HistoryPage';
 import ImportPage from './pages/ImportPage';
 import SipPage from './pages/SipPage';
+import SettingsPage from './pages/SettingsPage';
 import { CurrencyProvider, useCurrency } from './hooks/CurrencyContext';
 
 const NAV_ITEMS = [
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { id: 'sip',          label: 'SIP Tracker',  icon: '💰' },
   { id: 'history',      label: 'History',      icon: '📈' },
   { id: 'import',       label: 'Import',       icon: '📥' },
+  { id: 'settings',     label: 'Settings',     icon: '⚙️' },
 ];
 
 const PAGES = {
@@ -29,6 +31,7 @@ const PAGES = {
   sip:         SipPage,
   history:     HistoryPage,
   import:      ImportPage,
+  settings:    SettingsPage,
 };
 
 const COMMON_CURRENCIES = [
