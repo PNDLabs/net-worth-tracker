@@ -55,7 +55,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
             padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
             background: '#e3f2fd', color: '#1565c0',
           }}>
-            ✏️ AI refined {validationNotes.length} field{validationNotes.length !== 1 ? 's' : ''}
+            ✏️ AI refined {validationNotes.length} {validationNotes.length !== 1 ? 'changes' : 'change'}
           </span>
         )}
       </div>

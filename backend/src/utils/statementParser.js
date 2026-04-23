@@ -636,9 +636,16 @@ async function parseStatement(text, options = {}) {
         // Pass 2: validate and refine the initial extraction
         try {
           const refined = await validateAndRefineWithAI(text, aiResult, options);
-          // Only accept the refined result if it returned at least as many records as Pass 1
-          // (prevents the validator from accidentally discarding valid records)
-          if (refined && Array.isArray(refined.records) && refined.records.length >= aiResult.records.length) {
+          // Only accept the refined result if it returned at least as many records as Pass 1,
+          // the import_type is consistent, and the records are well-formed.
+          // This prevents the validator from accidentally discarding valid records or
+          // silently switching to a different entity type.
+          if (
+            refined &&
+            Array.isArray(refined.records) &&
+            refined.records.length >= aiResult.records.length &&
+            refined.import_type === aiResult.import_type
+          ) {
             return {
               import_type: refined.import_type,
               records: refined.records,

@@ -360,6 +360,9 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     // If the client supplies pre-parsed records (from the /pdf/preview step) use them
     // directly so the user always gets exactly what they reviewed imported into the DB.
     if (req.body.previewed_records) {
+      if (!req.body.import_type) {
+        return res.status(400).json({ error: 'import_type is required when previewed_records is provided' });
+      }
       let previewedRecords;
       try {
         previewedRecords = JSON.parse(req.body.previewed_records);
@@ -370,7 +373,7 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
         return res.status(400).json({ error: 'previewed_records must be a JSON array' });
       }
       parsed = {
-        import_type: req.body.import_type || 'accounts',
+        import_type: req.body.import_type,
         records: previewedRecords,
         method: 'preview',
       };

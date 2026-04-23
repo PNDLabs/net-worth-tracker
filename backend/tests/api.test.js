@@ -538,6 +538,17 @@ describe('PDF Import API', () => {
     expect(res.status).toBe(400);
   });
 
+  test('POST /api/import/pdf - rejects previewed_records without import_type', async () => {
+    const pdfBuf = makePdf('Any Bank  Ending Balance: $1,000.00');
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', pdfBuf, { filename: 'any.pdf', contentType: 'application/pdf' })
+      .field('previewed_records', JSON.stringify([{ name: 'Test', type: 'savings', balance: 100 }]));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/import_type/i);
+  });
+
   test('POST /api/import/pdf - rejects missing file', async () => {
     const res = await request(app).post('/api/import/pdf');
     expect(res.status).toBe(400);
