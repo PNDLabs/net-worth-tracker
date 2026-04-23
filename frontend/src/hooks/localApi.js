@@ -18,7 +18,6 @@ import * as nwSvc       from '../db/networthService';
 import * as vhSvc       from '../db/valueHistoryService';
 import * as settingsSvc from '../db/settingsService';
 import * as importSvc   from '../db/importService';
-import { extractPdfText } from './pdfService';
 import { getAiSettings, isAiEnabled, saveAiSettings } from './aiSettings';
 import { parseStatement } from './statementParser';
 
@@ -91,10 +90,7 @@ export const api = {
   previewPdf: async (file, password) => {
     const aiConfig = await getAiSettings();
     const options = aiConfig.apiKey ? aiConfig : {};
-    const buf = await file.arrayBuffer();
-    const text = await extractPdfText(buf, password);
-    if (!text.trim()) throw new Error('Could not extract text from PDF. The file may be scanned/image-only.');
-    return parseStatement(text, options);
+    return importSvc.previewPdf(file, password, options);
   },
 
   importPdf: async (file, password, importType, previewedRecords) => {
