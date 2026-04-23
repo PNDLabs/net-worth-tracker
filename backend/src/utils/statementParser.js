@@ -120,11 +120,11 @@ Your task is to cross-check every field in the initial extraction against the ra
 
 Rules:
 - Use the same record schemas as the initial extraction (same field names and types).
+- Preserve the import_type from the initial extraction exactly as provided; do not change, infer, or reclassify it during validation.
 - Add any records that are clearly present in the raw text but were missed in the initial extraction.
 - Correct any field values that do not match what is stated in the raw text.
 - Fill in null fields where the value is clearly present in the raw text.
 - Remove records that have no basis in the raw text.
-- Confirm or correct the import_type if the raw text clearly indicates a different type.
 - validation_notes must be an array of short human-readable strings, one entry per change made. If no changes were needed, return an empty array [].
 - Convert all monetary values to plain positive numbers (no $ or ₹ signs, no commas, no negative signs).
 - Liabilities current_balance must always be a positive number.
