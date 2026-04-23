@@ -533,6 +533,7 @@ describe('PDF Import API', () => {
     const res = await request(app)
       .post('/api/import/pdf')
       .attach('file', pdfBuf, { filename: 'any.pdf', contentType: 'application/pdf' })
+      .field('import_type', 'accounts')
       .field('previewed_records', 'not-valid-json');
 
     expect(res.status).toBe(400);
