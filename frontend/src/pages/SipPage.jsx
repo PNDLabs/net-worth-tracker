@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../hooks/api';
+import { api } from '../hooks/apiAdapter';
 import { formatCurrency, formatDate, formatPct } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
 import {
