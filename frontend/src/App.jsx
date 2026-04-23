@@ -9,6 +9,7 @@ import ImportPage from './pages/ImportPage';
 import SipPage from './pages/SipPage';
 import SettingsPage from './pages/SettingsPage';
 import { CurrencyProvider, useCurrency } from './hooks/CurrencyContext';
+import { APP_VERSION } from './version';
 
 const NAV_ITEMS = [
   { id: 'dashboard',    label: 'Dashboard',    icon: '📊' },
@@ -137,6 +138,9 @@ function AppInner() {
             <span>⚙️</span>
             <span>Currency: <strong>{currency}</strong></span>
           </button>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6, paddingLeft: 2 }}>
+            v{APP_VERSION}
+          </div>
         </div>
       </aside>
 

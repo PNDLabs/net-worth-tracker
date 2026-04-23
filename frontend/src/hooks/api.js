@@ -119,4 +119,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text, import_type: importType }),
     }),
+
+  // Export / import full data
+  exportData: () => apiFetch('/export'),
+
+  importFullData: (payload) =>
+    apiFetch('/export/import', { method: 'POST', body: JSON.stringify(payload) }),
 };
