@@ -32,8 +32,8 @@ function isDuplicateRecord(conn, importType, row) {
   }
   if (importType === 'insurance') {
     return !!conn.prepare(
-      `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
-    ).get(name, row.provider ? String(row.provider) : null);
+      `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,'')) AND lower(coalesce(insured_name,'')) = lower(coalesce(?,''))`
+    ).get(name, row.provider ? String(row.provider) : null, row.insured_name ? String(row.insured_name) : null);
   }
   return false;
 }
