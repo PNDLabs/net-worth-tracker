@@ -270,7 +270,13 @@ export default function ImportPage({ onRefresh }) {
   async function confirmPdfImport(overrideType, finalRecords) {
     try {
       setLoading(true); setError('');
-      const res = await api.importPdf(pdfFile, pdfPassword, overrideType, finalRecords || pdfPreview?.records);
+      const records = finalRecords || pdfPreview?.records;
+      let res;
+      if (pdfPreview?.isText) {
+        res = await api.importJson(overrideType, records);
+      } else {
+        res = await api.importPdf(pdfFile, pdfPassword, overrideType, records);
+      }
       setResult(res);
       setPdfPreview(null);
       setPdfFile(null);
