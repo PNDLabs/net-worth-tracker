@@ -685,38 +685,60 @@ function parseInsuranceDocument(text) {
   else if (/\bumbrella\b/.test(lowerText)) type = 'umbrella';
   else if (/\bbusiness\b/.test(lowerText)) type = 'business';
 
-  // Extract covered conditions: look for bullet-list or comma-separated covered items
+  // Extract covered conditions: look for known condition keywords in the document
   const coveredConditions = [];
-  const conditionKeywords = [
-    /\bhospitali[sz]ation\b/i, /\bsurgery\b/i, /\baccidental\s+death\b/i,
-    /\bcritical\s+illness\b/i, /\bmaternity\b/i, /\bdental\b/i, /\bvision\b/i,
-    /\bprescription\b/i, /\bemergency\b/i, /\bambulance\b/i, /\bmental\s+health\b/i,
-    /\bphysical\s+therapy\b/i, /\bpre[-\s]?existing\b/i, /\bICU\b/, /\bchemotherapy\b/i,
-    /\bdialysis\b/i, /\borgan\s+transplant\b/i, /\brehabilitation\b/i,
-    /\bpreventive\s+care\b/i, /\boutpatient\b/i, /\binpatient\b/i,
-    /\bcollision\b/i, /\bcomprehensive\b/i, /\bliability\b/i, /\buninsured\s+motorist\b/i,
-    /\bdisability\b/i, /\bfuneral\s+expense\b/i, /\bpersonal\s+accident\b/i,
+  // Each entry: [regex to detect in text, human-readable label]
+  const CONDITION_MAP = [
+    [/\bhospitali[sz]ation\b/i, 'hospitalization'],
+    [/\bsurgery\b/i, 'surgery'],
+    [/\baccidental\s+death\b/i, 'accidental death'],
+    [/\bcritical\s+illness\b/i, 'critical illness'],
+    [/\bmaternity\b/i, 'maternity'],
+    [/\bdental\b/i, 'dental'],
+    [/\bvision\b/i, 'vision'],
+    [/\bprescription\b/i, 'prescription'],
+    [/\bemergency\b/i, 'emergency'],
+    [/\bambulance\b/i, 'ambulance'],
+    [/\bmental\s+health\b/i, 'mental health'],
+    [/\bphysical\s+therapy\b/i, 'physical therapy'],
+    [/\bpre[-\s]?existing\b/i, 'pre-existing'],
+    [/\bICU\b/, 'ICU'],
+    [/\bchemotherapy\b/i, 'chemotherapy'],
+    [/\bdialysis\b/i, 'dialysis'],
+    [/\borgan\s+transplant\b/i, 'organ transplant'],
+    [/\brehabilitation\b/i, 'rehabilitation'],
+    [/\bpreventive\s+care\b/i, 'preventive care'],
+    [/\boutpatient\b/i, 'outpatient'],
+    [/\binpatient\b/i, 'inpatient'],
+    [/\bcollision\b/i, 'collision'],
+    [/\bcomprehensive\b/i, 'comprehensive'],
+    [/\bliability\b/i, 'liability'],
+    [/\buninsured\s+motorist\b/i, 'uninsured motorist'],
+    [/\bdisability\b/i, 'disability'],
+    [/\bfuneral\s+expense\b/i, 'funeral expense'],
+    [/\bpersonal\s+accident\b/i, 'personal accident'],
   ];
-  for (const re of conditionKeywords) {
-    if (re.test(text)) {
-      const label = re.source
-        .replace(/\\b/g, '').replace(/\\s\+/g, ' ').replace(/\\s\?\+?/g, '')
-        .replace(/[-\s]*\?/g, '').replace(/\\/g, '').replace(/\(\?:.*?\)/g, '')
-        .replace(/[()\\]/g, '').trim().toLowerCase();
-      if (label && !coveredConditions.includes(label)) {
-        coveredConditions.push(label);
-      }
+  for (const [re, label] of CONDITION_MAP) {
+    if (re.test(text) && !coveredConditions.includes(label)) {
+      coveredConditions.push(label);
     }
   }
 
-  // Extract terms: pull text from sections that describe coverage, benefits, exclusions
+  // Extract terms: pull text from sections that describe coverage, benefits, exclusions.
+  // Each captured section includes up to MAX_TERMS_SECTION_CHARS characters after the heading.
+  const MAX_TERMS_SECTION_CHARS = 800;
+  // Maximum number of sections to collect — keeps terms concise while covering key areas.
+  const MAX_TERMS_SECTIONS = 5;
   const termsSections = [];
-  const sectionRe = /(?:coverage|benefits?|exclusions?|terms?\s+(?:and\s+conditions?)?|what\s+(?:is|is\s+not)\s+covered|deductible|co[-\s]?pay|waiting\s+period|claim\s+(?:procedure|process))[\s\S]{0,800}/gi;
+  const sectionRe = new RegExp(
+    `(?:coverage|benefits?|exclusions?|terms?\\s+(?:and\\s+conditions?)?|what\\s+(?:is|is\\s+not)\\s+covered|deductible|co[-\\s]?pay|waiting\\s+period|claim\\s+(?:procedure|process))[\\s\\S]{0,${MAX_TERMS_SECTION_CHARS}}`,
+    'gi'
+  );
   let sm;
   while ((sm = sectionRe.exec(text)) !== null) {
     const section = sm[0].replace(/\s+/g, ' ').trim();
     if (section.length > 30) termsSections.push(section);
-    if (termsSections.length >= 5) break;
+    if (termsSections.length >= MAX_TERMS_SECTIONS) break;
   }
   const terms = termsSections.length > 0 ? termsSections.join(' | ') : null;
 
