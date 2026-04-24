@@ -36,7 +36,7 @@ Your task is to identify the financial records in the text and return structured
 }
 
 For "accounts" records use:
-{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "USD", "balance": number }
+{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "<ISO 4217 currency code>", "balance": number }
 
 For "assets" records use:
 { "name": string, "category": "<real_estate|vehicle|crypto|collectible|business|other>", "acquisition_date": "YYYY-MM-DD|null", "acquisition_cost": number|null, "current_value": number }
@@ -61,7 +61,29 @@ Rules:
 - Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
 - Choose "sip" as import_type when the document contains mutual fund SIP/systematic investment plan transactions with NAV and units data. Each transaction row becomes one record.
 - For CAS (Consolidated Account Statement) documents that list multiple mutual fund scheme portfolios: return each scheme as an "accounts" record with type="brokerage", balance=current market value, institution=AMC name, and use import_type="accounts".
-- When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.`;
+- When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.
+
+CURRENCY DETECTION (critical – do not default to USD unless the document clearly uses US dollars):
+- Look for currency symbols in the document: ₹ or "Rs." or "INR" → use "INR"; "$" or "USD" → use "USD"; "€" or "EUR" → use "EUR"; "£" or "GBP" → use "GBP"; "¥" or "JPY" → use "JPY".
+- If the institution is an Indian bank/fund and no explicit currency symbol is given, default to "INR".
+- Apply the detected currency consistently to ALL account records in the document.
+
+AMOUNT PARSING (critical – do not misread Indian number format):
+- Indian number format uses groups of 2 after the first group of 3: 1,00,000 = 100000 (one lakh); 10,00,000 = 1000000 (ten lakhs); 1,00,00,000 = 10000000 (one crore).
+- Always remove ALL commas before converting to a number: "1,00,000" → 100000; "10,00,000" → 1000000.
+- Never treat a comma-separated group as a decimal separator.
+
+ACCOUNT TYPE CLASSIFICATION (critical – classify precisely):
+- "savings" → savings bank account or savings account
+- "checking" → current account, checking account
+- "cd" → fixed deposit (FD), certificate of deposit, recurring deposit (RD)
+- "brokerage" → demat account, trading account, mutual fund portfolio, investment account
+- "401k" → 401(k) retirement plan
+- "ira" → IRA (traditional)
+- "roth_ira" → Roth IRA
+- "pension" → pension, provident fund (PF, EPF, PPF)
+- "money_market" → money market account or liquid fund
+- "other" → use only when no other type fits`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -120,7 +142,7 @@ Your task is to cross-check every field in the initial extraction against the ra
 
 Rules:
 - Use the same record schemas as the initial extraction (same field names and types).
-- Preserve the import_type from the initial extraction exactly as provided; do not change, infer, or reclassify it during validation.
+- Preserve the import_type from the initial extraction unless it is clearly and obviously wrong (e.g. the document is unambiguously a liability statement but was classified as accounts).
 - Add any records that are clearly present in the raw text but were missed in the initial extraction.
 - Correct any field values that do not match what is stated in the raw text.
 - Fill in null fields where the value is clearly present in the raw text.
@@ -128,7 +150,21 @@ Rules:
 - validation_notes must be an array of short human-readable strings, one entry per change made. If no changes were needed, return an empty array [].
 - Convert all monetary values to plain positive numbers (no $ or ₹ signs, no commas, no negative signs).
 - Liabilities current_balance must always be a positive number.
-- Return ONLY the JSON, nothing else.`;
+- Return ONLY the JSON, nothing else.
+
+CURRENCY VALIDATION (check every record):
+- Scan the raw text for currency indicators: ₹ or "Rs." or "INR" → set currency to "INR"; "$" or "USD" → "USD"; "€" or "EUR" → "EUR"; "£" or "GBP" → "GBP".
+- If any record has the wrong currency code, correct it and add a validation note.
+- If the document is from an Indian institution and the currency field says "USD", change it to "INR".
+
+AMOUNT VALIDATION (check every monetary value):
+- Indian number format: 1,00,000 = 100000; 10,00,000 = 1000000; 1,00,00,000 = 10000000. Remove ALL commas before interpreting.
+- If a balance/amount appears to be off by a factor of 10, 100, or 1000 compared to what the raw text shows, correct it.
+- Verify the numeric value against the raw text and correct any misreading.
+
+ACCOUNT / RECORD TYPE VALIDATION (check every type field):
+- For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF; "money_market" = liquid fund.
+- Correct the type field if the label in the raw text clearly indicates a different classification.`;
 
 /**
  * Pass 2: validate and refine an initial extraction against the source text.
@@ -182,6 +218,95 @@ async function validateAndRefineWithAI(text, initialResult, options = {}) {
   return parsed;
 }
 
+// ─── AI Accuracy Review (Pass 3) ─────────────────────────────────────────────
+
+const AI_ACCURACY_REVIEW_PROMPT = `You are a specialist financial data accuracy reviewer. You will receive:
+1. Raw text extracted from a financial document.
+2. A previously validated JSON extraction.
+
+Your SOLE job is to catch and fix three specific categories of errors:
+
+CATEGORY 1 – WRONG CURRENCY
+- Scan the raw text carefully for any currency indicator: ₹, Rs., INR → "INR"; $, USD → "USD"; €, EUR → "EUR"; £, GBP → "GBP"; ¥, JPY → "JPY".
+- If an account record has the wrong currency code, correct it.
+- Consistency rule: all records in the same document should use the same currency unless the document explicitly mixes currencies.
+
+CATEGORY 2 – WRONG AMOUNT / MAGNITUDE
+- Verify every monetary value (balance, current_balance, current_value, amount, premium_amount, coverage_amount, original_principal, minimum_payment) against the raw text.
+- Indian number format: 1,00,000 = 100000; 10,00,000 = 1000000; 1,00,00,000 = 10000000. Remove ALL commas, then read the integer.
+- If an amount is off by a factor of 10, 100, 1000, or any other magnitude, correct it to exactly match the raw text.
+
+CATEGORY 3 – WRONG TYPE CLASSIFICATION
+- For accounts "type": check whether "savings"/"checking"/"cd"/"brokerage"/"pension"/"money_market"/"401k"/"ira"/"roth_ira"/"other" matches the label in the raw text.
+  - Fixed Deposit / FD / RD → "cd"
+  - Current Account → "checking"
+  - Savings Account / SB Account → "savings"
+  - Demat / Trading / Mutual Fund portfolio → "brokerage"
+  - EPF / PPF / Provident Fund / Pension → "pension"
+  - Liquid Fund / Money Market → "money_market"
+- For liabilities "type": mortgage/auto/student/personal/credit_card/heloc/other – verify against the raw text.
+- For insurance "type": verify the policy type against the raw text.
+
+Return the corrected result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON:
+{
+  "import_type": "<same as input unless obviously wrong>",
+  "records": [ ... ],
+  "accuracy_notes": [ "<one short string per correction made>" ]
+}
+If no corrections are needed, return the records unchanged with "accuracy_notes": [].`;
+
+/**
+ * Pass 3: specialist accuracy review for currency, amount magnitude, and type classification.
+ *
+ * @param {string} text            – full document text (truncated to MAX_AI_INPUT_CHARS)
+ * @param {object} validatedResult – { import_type, records } from Pass 2
+ * @param {object} options         – same AI options as parseWithAI
+ * @returns {Promise<{ import_type, records, accuracy_notes }|null>}
+ */
+async function reviewFieldAccuracy(text, validatedResult, options = {}) {
+  const apiKey = options.apiKey || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const apiUrl = options.apiUrl || process.env.AI_API_URL || 'https://api.openai.com/v1';
+  const model = options.model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+  const truncated = text.slice(0, MAX_AI_INPUT_CHARS);
+  const userMessage =
+    `RAW TEXT:\n${truncated}\n\n` +
+    `VALIDATED EXTRACTION:\n${JSON.stringify(validatedResult, null, 2)}`;
+
+  const response = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: AI_ACCURACY_REVIEW_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI accuracy review API error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI accuracy review returned empty response');
+
+  const parsed = JSON.parse(content);
+  if (!parsed.records) throw new Error('AI accuracy review response missing records field');
+  if (!Array.isArray(parsed.accuracy_notes)) parsed.accuracy_notes = [];
+  return parsed;
+}
+
 // ─── Pattern-based Fallback ───────────────────────────────────────────────────
 
 /**
@@ -213,6 +338,36 @@ function normalizeDate(s) {
     return `${year}-${a.padStart(2, '0')}-${b.padStart(2, '0')}`;
   }
   return null;
+}
+
+/**
+ * Detect the ISO 4217 currency code from document text.
+ * Returns 'USD' as the default when no clear indicator is found.
+ */
+function detectCurrency(text) {
+  // Check a larger slice for currency indicators to improve detection
+  const sample = text.slice(0, 5000);
+  // Count occurrences to determine dominant currency
+  const inrScore =
+    (sample.match(/₹/g) || []).length * 3 +
+    (sample.match(/\bRs\.?\b/g) || []).length * 2 +
+    (sample.match(/\bINR\b/g) || []).length * 2;
+  const usdScore =
+    (sample.match(/\$/g) || []).length * 3 +
+    (sample.match(/\bUSD\b/g) || []).length * 2;
+  const eurScore =
+    (sample.match(/€/g) || []).length * 3 +
+    (sample.match(/\bEUR\b/g) || []).length * 2;
+  const gbpScore =
+    (sample.match(/£/g) || []).length * 3 +
+    (sample.match(/\bGBP\b/g) || []).length * 2;
+  const jpyScore =
+    (sample.match(/¥/g) || []).length * 3 +
+    (sample.match(/\bJPY\b/g) || []).length * 2;
+
+  const scores = { INR: inrScore, USD: usdScore, EUR: eurScore, GBP: gbpScore, JPY: jpyScore };
+  const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
+  return best[1] > 0 ? best[0] : 'USD';
 }
 
 /**
@@ -274,9 +429,12 @@ function extractInstitution(text) {
 
 /**
  * Extract currency amounts from a string, largest first.
+ * Handles USD ($), INR (₹ / Rs.), EUR (€), GBP (£) prefixes and
+ * both Western (1,000,000) and Indian (10,00,000) number formats.
  */
 function extractAmounts(text) {
-  const re = /\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/g;
+  // Match optional currency prefix then a number that may use commas in any grouping
+  const re = /(?:\$|₹|Rs\.?|€|£|¥)?\s*((?:\d{1,3})(?:,\d{2,3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g;
   const amounts = [];
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -291,6 +449,7 @@ function extractAmounts(text) {
  */
 function parseBankStatement(text) {
   const institution = extractInstitution(text);
+  const currency = detectCurrency(text);
   const records = [];
 
   // Look for labelled balance lines (supports both $ and ₹/Rs. prefixes)
@@ -324,17 +483,19 @@ function parseBankStatement(text) {
         const context = (before + m[0]).toLowerCase();
         let type = 'other';
         // Check FD only in the matched text itself to avoid contaminating nearby accounts
-        if (/fixed\s*deposit/.test(matchLine)) type = 'cd';
-        else if (/checking/.test(context)) type = 'checking';
+        if (/fixed\s*deposit|fd\b/.test(matchLine)) type = 'cd';
+        else if (/recurring\s*deposit|rd\b/.test(matchLine)) type = 'cd';
+        else if (/checking|current\s+account/.test(context)) type = 'checking';
         else if (/saving/.test(context)) type = 'savings';
         else if (/money\s*market/.test(context)) type = 'money_market';
         else if (/cd|certificate/.test(context)) type = 'cd';
         else if (/401\s*k/.test(context)) type = '401k';
         else if (/roth/.test(context)) type = 'roth_ira';
-        else if (/ira/.test(context)) type = 'ira';
-        else if (/brokerage|portfolio|invest/.test(context)) type = 'brokerage';
+        else if (/\bira\b/.test(context)) type = 'ira';
+        else if (/\bepf\b|\bppf\b|\bprovident\b|\bpension\b/.test(context)) type = 'pension';
+        else if (/brokerage|portfolio|invest|demat/.test(context)) type = 'brokerage';
 
-        records.push({ name, institution, type, currency: 'USD', balance });
+        records.push({ name, institution, type, currency, balance });
       }
     }
   }
@@ -344,12 +505,12 @@ function parseBankStatement(text) {
     const totalLine = text.match(/(?:total|net)\s+(?:assets?|balance|worth)[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
     if (totalLine) {
       const balance = parseFloat(totalLine[1].replace(/,/g, ''));
-      records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance });
+      records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance });
     } else {
-      // Last resort: largest dollar amount found
+      // Last resort: largest amount found
       const amounts = extractAmounts(text);
       if (amounts.length > 0) {
-        records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance: amounts[0] });
+        records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance: amounts[0] });
       }
     }
   }
@@ -617,9 +778,10 @@ function parseCasStatement(text) {
  * Parse extracted PDF text into structured financial records.
  *
  * Flow:
- *   Pass 1 – AI extraction (parseWithAI)          [when AI key available]
- *   Pass 2 – AI validation & refinement           [when Pass 1 succeeded]
- *   Fallback – pattern-based parser               [when AI unavailable or Pass 1 returned 0 records]
+ *   Pass 1 – AI extraction (parseWithAI)                    [when AI key available]
+ *   Pass 2 – AI validation & refinement                     [when Pass 1 succeeded]
+ *   Pass 3 – AI accuracy review (currency / amount / type)  [when Pass 2 succeeded]
+ *   Fallback – pattern-based parser                         [when AI unavailable or Pass 1 returned 0 records]
  *
  * @param {string} text     – full PDF text
  * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern }
@@ -634,28 +796,52 @@ async function parseStatement(text, options = {}) {
       const aiResult = await parseWithAI(text, options);
       if (aiResult && Array.isArray(aiResult.records) && aiResult.records.length > 0) {
         // Pass 2: validate and refine the initial extraction
+        let pass2Result = null;
         try {
           const refined = await validateAndRefineWithAI(text, aiResult, options);
-          // Only accept the refined result if it returned at least as many records as Pass 1,
-          // the import_type is consistent, and the records are well-formed.
-          // This prevents the validator from accidentally discarding valid records or
-          // silently switching to a different entity type.
+          // Accept the refined result when it has records and its import_type is either
+          // unchanged (most common) or clearly correcting an obvious misclassification.
+          // We still require it not to silently drop records compared to Pass 1.
           if (
             refined &&
             Array.isArray(refined.records) &&
-            refined.records.length >= aiResult.records.length &&
-            refined.import_type === aiResult.import_type
+            refined.records.length >= aiResult.records.length
           ) {
-            return {
-              import_type: refined.import_type,
-              records: refined.records,
-              method: 'ai',
-              raw_preview,
-              validation_notes: refined.validation_notes,
-            };
+            pass2Result = refined;
           }
         } catch (_validateErr) {
-          // Validation pass failed — use Pass 1 result as-is
+          // Validation pass failed — fall through to Pass 3 with Pass 1 result
+        }
+
+        // Pass 3: specialist accuracy review (currency, amount magnitude, type classification)
+        const pass2OrPass1 = pass2Result || aiResult;
+        try {
+          const accurate = await reviewFieldAccuracy(text, pass2OrPass1, options);
+          if (accurate && Array.isArray(accurate.records) && accurate.records.length > 0) {
+            const allNotes = [
+              ...(pass2Result ? pass2Result.validation_notes : []),
+              ...(accurate.accuracy_notes || []),
+            ];
+            return {
+              import_type: accurate.import_type,
+              records: accurate.records,
+              method: 'ai',
+              raw_preview,
+              validation_notes: allNotes,
+            };
+          }
+        } catch (_accuracyErr) {
+          // Pass 3 failed — use Pass 2 (or Pass 1) result
+        }
+
+        if (pass2Result) {
+          return {
+            import_type: pass2Result.import_type,
+            records: pass2Result.records,
+            method: 'ai',
+            raw_preview,
+            validation_notes: pass2Result.validation_notes,
+          };
         }
         return { ...aiResult, method: 'ai', raw_preview, validation_notes: [] };
       }
