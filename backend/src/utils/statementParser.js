@@ -832,24 +832,26 @@ async function parseStatement(text, options = {}) {
         }
 
         // Pass 3: specialist accuracy review (currency, amount magnitude, type classification)
-        const pass2OrPass1 = pass2Result || aiResult;
-        try {
-          const accurate = await reviewFieldAccuracy(text, pass2OrPass1, options);
-          if (accurate && Array.isArray(accurate.records) && accurate.records.length > 0) {
-            const allNotes = [
-              ...(pass2Result ? pass2Result.validation_notes : []),
-              ...(accurate.accuracy_notes || []),
-            ];
-            return {
-              import_type: accurate.import_type,
-              records: accurate.records,
-              method: 'ai',
-              raw_preview,
-              validation_notes: allNotes,
-            };
+        // Only run when Pass 2 actually made corrections — if validation_notes is empty,
+        // Pass 1 was already accurate and there is nothing for Pass 3 to catch.
+        if (pass2Result && pass2Result.validation_notes.length > 0) {
+          try {
+            const accurate = await reviewFieldAccuracy(text, pass2Result, options);
+            if (accurate && Array.isArray(accurate.records) && accurate.records.length > 0) {
+              return {
+                import_type: accurate.import_type,
+                records: accurate.records,
+                method: 'ai',
+                raw_preview,
+                validation_notes: [
+                  ...pass2Result.validation_notes,
+                  ...(accurate.accuracy_notes || []),
+                ],
+              };
+            }
+          } catch (_accuracyErr) {
+            // Pass 3 failed — fall through to return Pass 2 result
           }
-        } catch (_accuracyErr) {
-          // Pass 3 failed — use Pass 2 (or Pass 1) result
         }
 
         if (pass2Result) {
