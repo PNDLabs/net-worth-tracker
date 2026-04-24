@@ -45,7 +45,9 @@ For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
 For "insurance" records use:
-{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null }
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "terms": string|null, "covered_conditions": ["<condition1>", "<condition2>"] }
+- "terms": A comprehensive summary of the policy's key terms extracted verbatim or closely paraphrased from the document. Include: what is covered, coverage limits, deductibles, co-pays/co-insurance, exclusions, waiting periods, claim procedures, and any other material conditions. This is the most important field for enabling later coverage questions — be thorough. Use null only when the document contains no coverage detail at all.
+- "covered_conditions": A JSON array of specific covered conditions, procedures, events, or items explicitly listed in the document (e.g. ["hospitalization", "surgery", "accidental death", "critical illness", "maternity", "dental cleaning"]). Use [] when none can be identified.
 
 For "sip" records (SIP / mutual fund transaction statements) use:
 { "name": string, "symbol": string|null, "amount": number, "units": number|null, "nav": number|null, "installment_date": "YYYY-MM-DD" }
@@ -164,7 +166,11 @@ AMOUNT VALIDATION (check every monetary value):
 
 ACCOUNT / RECORD TYPE VALIDATION (check every type field):
 - For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF; "money_market" = liquid fund.
-- Correct the type field if the label in the raw text clearly indicates a different classification.`;
+- Correct the type field if the label in the raw text clearly indicates a different classification.
+
+INSURANCE DETAIL VALIDATION (applies only when import_type is "insurance"):
+- "terms": Verify the terms field contains a thorough summary of coverage. If the raw text has coverage details, exclusions, deductibles, co-pays, waiting periods, or claim procedures that are missing from terms, expand the field. This is critical — a sparse or missing terms field will make coverage queries useless.
+- "covered_conditions": Verify the array contains all specific conditions, procedures, or events explicitly listed as covered in the raw text. Add any that were missed (e.g. hospitalization, surgery, maternity, accidental death, critical illness, dental cleaning, vision exam). Must be a JSON array of strings, not a plain string.`;
 
 /**
  * Pass 2: validate and refine an initial extraction against the source text.
@@ -246,6 +252,7 @@ CATEGORY 3 – WRONG TYPE CLASSIFICATION
   - Liquid Fund / Money Market → "money_market"
 - For liabilities "type": mortgage/auto/student/personal/credit_card/heloc/other – verify against the raw text.
 - For insurance "type": verify the policy type against the raw text.
+- For insurance records: if "terms" is null or very short (< 50 characters) but the raw text contains coverage details, expand "terms" with all coverage information, exclusions, deductibles, and claim procedures found. If "covered_conditions" is empty but the raw text lists covered items, populate it as a JSON array.
 
 Return the corrected result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON:
 {
@@ -678,6 +685,63 @@ function parseInsuranceDocument(text) {
   else if (/\bumbrella\b/.test(lowerText)) type = 'umbrella';
   else if (/\bbusiness\b/.test(lowerText)) type = 'business';
 
+  // Extract covered conditions: look for known condition keywords in the document
+  const coveredConditions = [];
+  // Each entry: [regex to detect in text, human-readable label]
+  const CONDITION_MAP = [
+    [/\bhospitali[sz]ation\b/i, 'hospitalization'],
+    [/\bsurgery\b/i, 'surgery'],
+    [/\baccidental\s+death\b/i, 'accidental death'],
+    [/\bcritical\s+illness\b/i, 'critical illness'],
+    [/\bmaternity\b/i, 'maternity'],
+    [/\bdental\b/i, 'dental'],
+    [/\bvision\b/i, 'vision'],
+    [/\bprescription\b/i, 'prescription'],
+    [/\bemergency\b/i, 'emergency'],
+    [/\bambulance\b/i, 'ambulance'],
+    [/\bmental\s+health\b/i, 'mental health'],
+    [/\bphysical\s+therapy\b/i, 'physical therapy'],
+    [/\bpre[-\s]?existing\b/i, 'pre-existing'],
+    [/\bICU\b/, 'ICU'],
+    [/\bchemotherapy\b/i, 'chemotherapy'],
+    [/\bdialysis\b/i, 'dialysis'],
+    [/\borgan\s+transplant\b/i, 'organ transplant'],
+    [/\brehabilitation\b/i, 'rehabilitation'],
+    [/\bpreventive\s+care\b/i, 'preventive care'],
+    [/\boutpatient\b/i, 'outpatient'],
+    [/\binpatient\b/i, 'inpatient'],
+    [/\bcollision\b/i, 'collision'],
+    [/\bcomprehensive\b/i, 'comprehensive'],
+    [/\bliability\b/i, 'liability'],
+    [/\buninsured\s+motorist\b/i, 'uninsured motorist'],
+    [/\bdisability\b/i, 'disability'],
+    [/\bfuneral\s+expense\b/i, 'funeral expense'],
+    [/\bpersonal\s+accident\b/i, 'personal accident'],
+  ];
+  for (const [re, label] of CONDITION_MAP) {
+    if (re.test(text) && !coveredConditions.includes(label)) {
+      coveredConditions.push(label);
+    }
+  }
+
+  // Extract terms: pull text from sections that describe coverage, benefits, exclusions.
+  // Each captured section includes up to MAX_TERMS_SECTION_CHARS characters after the heading.
+  const MAX_TERMS_SECTION_CHARS = 800;
+  // Maximum number of sections to collect — keeps terms concise while covering key areas.
+  const MAX_TERMS_SECTIONS = 5;
+  const termsSections = [];
+  const sectionRe = new RegExp(
+    `(?:coverage|benefits?|exclusions?|terms?\\s+(?:and\\s+conditions?)?|what\\s+(?:is|is\\s+not)\\s+covered|deductible|co[-\\s]?pay|waiting\\s+period|claim\\s+(?:procedure|process))[\\s\\S]{0,${MAX_TERMS_SECTION_CHARS}}`,
+    'gi'
+  );
+  let sm;
+  while ((sm = sectionRe.exec(text)) !== null) {
+    const section = sm[0].replace(/\s+/g, ' ').trim();
+    if (section.length > 30) termsSections.push(section);
+    if (termsSections.length >= MAX_TERMS_SECTIONS) break;
+  }
+  const terms = termsSections.length > 0 ? termsSections.join(' | ') : null;
+
   const record = {
     name,
     provider: institution !== 'Unknown Institution' ? institution : null,
@@ -690,6 +754,8 @@ function parseInsuranceDocument(text) {
     end_date: normalizeDate(endMatch ? endMatch[1] : null),
     renewal_date: normalizeDate(renewalMatch ? renewalMatch[1] : null),
     notes: null,
+    terms,
+    covered_conditions: coveredConditions,
   };
 
   return { import_type: 'insurance', records: [record] };
