@@ -84,9 +84,15 @@ ACCOUNT TYPE CLASSIFICATION (critical – classify precisely):
 - "401k" → 401(k) retirement plan
 - "ira" → IRA (traditional)
 - "roth_ira" → Roth IRA
-- "pension" → pension, provident fund (PF, EPF, PPF)
+- "pension" → pension, provident fund (PF, EPF, PPF, EPFO, NPS)
 - "money_market" → money market account or liquid fund
-- "other" → use only when no other type fits`;
+- "other" → use only when no other type fits
+
+EPFO / PROVIDENT FUND DOCUMENTS (critical – never classify as liabilities):
+- EPFO passbooks, UAN (Universal Account Number) statements, Employee Provident Fund (EPF) documents, and any Provident Fund (PF/PPF/GPF) statements are ALWAYS "accounts" records with type "pension".
+- These are Indian government-mandated retirement savings — they are assets/savings, never liabilities or loans.
+- Use institution="EPFO" (or the actual trust/employer name if shown), currency="INR", and set balance to the total corpus / closing balance shown.
+- If the document lists employer contributions, employee contributions, and interest separately, sum them into a single balance or return each as a separate account record.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -166,8 +172,12 @@ AMOUNT VALIDATION (check every monetary value):
 - Verify the numeric value against the raw text and correct any misreading.
 
 ACCOUNT / RECORD TYPE VALIDATION (check every type field):
-- For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF; "money_market" = liquid fund.
+- For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF/EPFO/NPS; "money_market" = liquid fund.
 - Correct the type field if the label in the raw text clearly indicates a different classification.
+
+EPFO / PROVIDENT FUND VALIDATION (critical – never classify as liabilities):
+- If the raw text contains keywords like "EPFO", "UAN", "Universal Account Number", "Employee Provident Fund", "EPF", "Provident Fund", "PF Passbook", or "PPF" and the extraction has import_type="liabilities", correct it to import_type="accounts" with type="pension" and add a validation note.
+- These are Indian retirement savings accounts and must never be returned as liabilities.
 
 INSURANCE DETAIL VALIDATION (applies only when import_type is "insurance"):
 - "terms": Verify the terms field contains a thorough summary of coverage. If the raw text has coverage details, exclusions, deductibles, co-pays, waiting periods, or claim procedures that are missing from terms, expand the field. This is critical — a sparse or missing terms field will make coverage queries useless.
@@ -250,10 +260,11 @@ CATEGORY 3 – WRONG TYPE CLASSIFICATION
   - Current Account → "checking"
   - Savings Account / SB Account → "savings"
   - Demat / Trading / Mutual Fund portfolio → "brokerage"
-  - EPF / PPF / Provident Fund / Pension → "pension"
+  - EPF / PPF / EPFO / Provident Fund / Pension / NPS → "pension"
   - Liquid Fund / Money Market → "money_market"
 - For liabilities "type": mortgage/auto/student/personal/credit_card/heloc/other – verify against the raw text.
 - For insurance "type": verify the policy type against the raw text.
+- EPFO / PROVIDENT FUND CORRECTION: If the raw text contains "EPFO", "UAN", "Universal Account Number", "Employee Provident Fund", "EPF Passbook", "PF Passbook", or "Provident Fund" and import_type is "liabilities", correct import_type to "accounts", set type="pension", and add an accuracy note. These are retirement savings, never liabilities.
 - For insurance records: if "terms" is null or very short (< 50 characters) but the raw text contains coverage details, expand "terms" with all coverage information, exclusions, deductibles, and claim procedures found. If "covered_conditions" is empty but the raw text lists covered items, populate it as a JSON array.
 - For insurance records: if "insured_name" is null but the raw text contains the name of the insured person or policy holder (labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", or "Member Name"), populate it.
 
@@ -396,6 +407,12 @@ function detectStatementType(text) {
     (/\bfolio\b/.test(lower) && /\bclosing\s+balance\b/.test(lower))
   ) return 'cas';
 
+  // EPFO / Provident Fund passbook → always accounts (pension), must be checked BEFORE
+  // the liability heuristic to prevent misclassification
+  if (
+    /\b(epfo|uan|universal\s+account\s+number|employee\s+provident\s+fund|employees['']?\s+provident|epf\s+passbook|pf\s+passbook|provident\s+fund\s+passbook)\b/.test(lower)
+  ) return 'accounts';
+
   // Strong signals for SIP / mutual fund transaction statements
   if (
     /\bsystematic\s+investment\s+plan\b/.test(lower) ||
@@ -478,6 +495,8 @@ function parseBankStatement(text) {
     /balance\s+as\s+of[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
     // Fixed Deposit / FD balances (common in Indian bank statements)
     /(?:fixed\s+deposit|fd)\s+(?:balance|amount|principal)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    // EPFO / PF total corpus / net balance (common in EPFO passbooks)
+    /(?:net\s+balance|total\s+(?:pf\s+)?(?:balance|corpus|amount))[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
   ];
 
   const foundBalances = new Set();
@@ -511,7 +530,7 @@ function parseBankStatement(text) {
         else if (/401\s*k/.test(context)) type = '401k';
         else if (/roth/.test(context)) type = 'roth_ira';
         else if (/\bira\b/.test(context)) type = 'ira';
-        else if (/\bepf\b|\bppf\b|\bprovident\b|\bpension\b/.test(context)) type = 'pension';
+        else if (/\bepfo\b|\bepf\b|\bppf\b|\buan\b|\bprovident\b|\bpension\b/.test(context)) type = 'pension';
         else if (/brokerage|portfolio|invest|demat/.test(context)) type = 'brokerage';
 
         records.push({ name, institution, type, currency, balance });
