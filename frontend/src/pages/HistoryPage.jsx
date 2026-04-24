@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../hooks/apiAdapter';
 import { formatCurrency, formatDate } from '../hooks/format';
+import { useCurrency } from '../hooks/CurrencyContext';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
@@ -10,6 +11,9 @@ export default function HistoryPage() {
   const [snapshots, setSnapshots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
+
+  const { currency } = useCurrency();
+  const fmt = (v) => formatCurrency(v, currency);
 
   const load = () => api.getSnapshots().then(setSnapshots).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
@@ -44,8 +48,8 @@ export default function HistoryPage() {
             <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
               <XAxis dataKey="snapshot_date" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v) => formatCurrency(v)} />
+              <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v) => fmt(v)} />
               <Legend />
               <Line type="monotone" dataKey="total_assets" name="Total Assets" stroke="#28a745" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="total_liabilities" name="Total Liabilities" stroke="#d73a49" strokeWidth={2} dot={false} />
@@ -80,9 +84,9 @@ export default function HistoryPage() {
                 {snapshots.map((s) => (
                   <tr key={s.id}>
                     <td>{formatDate(s.snapshot_date)}</td>
-                    <td style={{ textAlign: 'right' }} className="amount positive">{formatCurrency(s.total_assets)}</td>
-                    <td style={{ textAlign: 'right' }} className="amount negative">{formatCurrency(s.total_liabilities)}</td>
-                    <td className="amount" style={{ textAlign: 'right', color: 'var(--color-net)', fontWeight: 700 }}>{formatCurrency(s.net_worth)}</td>
+                    <td style={{ textAlign: 'right' }} className="amount positive">{fmt(s.total_assets)}</td>
+                    <td style={{ textAlign: 'right' }} className="amount negative">{fmt(s.total_liabilities)}</td>
+                    <td className="amount" style={{ textAlign: 'right', color: 'var(--color-net)', fontWeight: 700 }}>{fmt(s.net_worth)}</td>
                     <td>{s.notes || '—'}</td>
                   </tr>
                 ))}
