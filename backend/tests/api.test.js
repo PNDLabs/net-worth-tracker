@@ -239,16 +239,17 @@ describe('Net Worth API', () => {
     expect(res.body.netWorth).toBe(25000);
   });
 
-  test('GET /api/networth - includes SIP installments in totalAssets', async () => {
+  test('GET /api/networth - SIP installments are NOT included in totalAssets (tracked separately in SIP page)', async () => {
     await request(app).post('/api/accounts').send({ name: 'Bank', type: 'checking', balance: 10000 });
     await request(app).post('/api/sip').send({ name: 'NIFTY SIP Jan', symbol: 'NIFTYBEES', amount: 5000 });
     await request(app).post('/api/sip').send({ name: 'NIFTY SIP Feb', symbol: 'NIFTYBEES', amount: 3000 });
 
     const res = await request(app).get('/api/networth');
     expect(res.status).toBe(200);
-    expect(res.body.sipTotal).toBe(8000);
-    expect(res.body.totalAssets).toBe(18000);
-    expect(res.body.netWorth).toBe(18000);
+    // sipTotal is no longer part of net worth to avoid double-counting with account balances
+    expect(res.body.sipTotal).toBeUndefined();
+    expect(res.body.totalAssets).toBe(10000);
+    expect(res.body.netWorth).toBe(10000);
   });
 
   test('POST /api/networth/snapshots - creates a snapshot', async () => {

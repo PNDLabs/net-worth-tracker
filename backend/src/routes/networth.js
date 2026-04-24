@@ -21,13 +21,11 @@ function calcNetWorth(conn) {
   ).get().total;
   const assetsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM assets').get().total;
   const liabilitiesTotal = conn.prepare('SELECT COALESCE(SUM(ABS(current_balance)), 0) as total FROM liabilities').get().total;
-  const sipTotal = conn.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM sip_installments').get().total;
-
-  const totalAssets = accountsTotal + holdingsTotal + assetsTotal + sipTotal;
+  const totalAssets = accountsTotal + holdingsTotal + assetsTotal;
   const totalLiabilities = liabilitiesTotal;
   const netWorth = totalAssets - totalLiabilities;
 
-  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, sipTotal, totalAssets, totalLiabilities, netWorth };
+  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, totalAssets, totalLiabilities, netWorth };
 }
 
 // GET /api/networth
