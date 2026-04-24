@@ -141,6 +141,7 @@ function runMigrations(db) {
   };
   addColumnIfMissing('insurance_plans', 'terms', 'TEXT');
   addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
+  addColumnIfMissing('insurance_plans', 'insured_name', 'TEXT');
 }
 
 let _db;

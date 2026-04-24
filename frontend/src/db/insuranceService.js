@@ -30,14 +30,14 @@ export async function createInsurance({
   name, provider, type = 'other', policy_number,
   premium_amount, premium_frequency = 'monthly', coverage_amount,
   start_date, end_date, renewal_date, notes,
-  terms, covered_conditions,
+  terms, covered_conditions, insured_name,
 }) {
   if (!name) throw new Error('name is required');
   const dup = await query(
-    `SELECT id FROM insurance_plans WHERE lower(name)=lower(?) AND lower(coalesce(provider,''))=lower(coalesce(?,''))`,
-    [name, provider ?? null]
+    `SELECT id FROM insurance_plans WHERE lower(name)=lower(?) AND lower(coalesce(provider,''))=lower(coalesce(?,'')) AND lower(coalesce(insured_name,''))=lower(coalesce(?,''))`,
+    [name, provider ?? null, insured_name ?? null]
   );
-  if (dup.length) throw Object.assign(new Error('An insurance plan with the same name and provider already exists'), { status: 409 });
+  if (dup.length) throw Object.assign(new Error('An insurance plan with the same name, provider, and insured name already exists'), { status: 409 });
 
   const covJson = covered_conditions != null
     ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
@@ -47,8 +47,8 @@ export async function createInsurance({
     `INSERT INTO insurance_plans
        (name, provider, type, policy_number, premium_amount, premium_frequency,
         coverage_amount, start_date, end_date, renewal_date, notes,
-        terms, covered_conditions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        terms, covered_conditions, insured_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name, provider ?? null, type, policy_number ?? null,
       premium_amount != null ? Number(premium_amount) : null,
@@ -58,6 +58,7 @@ export async function createInsurance({
       notes ?? null,
       terms ?? null,
       covJson,
+      insured_name ?? null,
     ]
   );
   const rows = await query('SELECT * FROM insurance_plans WHERE id = ?', [lastId]);
@@ -68,7 +69,7 @@ export async function updateInsurance(id, {
   name, provider, type, policy_number,
   premium_amount, premium_frequency, coverage_amount,
   start_date, end_date, renewal_date, notes,
-  terms, covered_conditions,
+  terms, covered_conditions, insured_name,
 }) {
   const existing = await getInsurancePlan(id);
   const updated = {
@@ -89,6 +90,7 @@ export async function updateInsurance(id, {
       : (typeof existing.covered_conditions === 'string'
         ? existing.covered_conditions
         : JSON.stringify(existing.covered_conditions || [])),
+    insured_name: insured_name !== undefined ? insured_name : existing.insured_name,
   };
   if (!updated.name) throw new Error('name is required');
 
@@ -96,14 +98,14 @@ export async function updateInsurance(id, {
     `UPDATE insurance_plans
      SET name=?, provider=?, type=?, policy_number=?, premium_amount=?,
          premium_frequency=?, coverage_amount=?, start_date=?, end_date=?,
-         renewal_date=?, notes=?, terms=?, covered_conditions=?,
+         renewal_date=?, notes=?, terms=?, covered_conditions=?, insured_name=?,
          updated_at=datetime('now')
      WHERE id=?`,
     [
       updated.name, updated.provider, updated.type, updated.policy_number,
       updated.premium_amount, updated.premium_frequency, updated.coverage_amount,
       updated.start_date, updated.end_date, updated.renewal_date, updated.notes,
-      updated.terms, updated.covered_conditions,
+      updated.terms, updated.covered_conditions, updated.insured_name,
       id,
     ]
   );

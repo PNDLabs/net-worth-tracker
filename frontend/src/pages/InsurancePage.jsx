@@ -13,7 +13,7 @@ const EMPTY = {
   name: '', provider: '', type: 'other', policy_number: '',
   premium_amount: '', premium_frequency: 'monthly', coverage_amount: '',
   start_date: '', end_date: '', renewal_date: '', notes: '',
-  terms: '', covered_conditions: [],
+  terms: '', covered_conditions: [], insured_name: '',
 };
 
 function statusBadge(plan) {
@@ -92,6 +92,7 @@ export default function InsurancePage() {
         // Pre-fill terms with the source text so the user doesn't have to paste again
         terms: aiText,
         covered_conditions: Array.isArray(r.covered_conditions) ? r.covered_conditions : [],
+        insured_name: r.insured_name || '',
       });
       setEditing(null);
       setShowAiModal(false);
@@ -129,6 +130,7 @@ export default function InsurancePage() {
       notes: p.notes || '',
       terms: p.terms || '',
       covered_conditions: Array.isArray(p.covered_conditions) ? p.covered_conditions : [],
+      insured_name: p.insured_name || '',
     });
     setShowCoverageDetails(!!(p.terms || (Array.isArray(p.covered_conditions) && p.covered_conditions.length > 0)));
     setConditionInput('');
@@ -238,6 +240,7 @@ export default function InsurancePage() {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Insured</th>
                   <th>Provider</th>
                   <th>Type</th>
                   <th>Policy #</th>
@@ -268,6 +271,7 @@ export default function InsurancePage() {
                           </div>
                         )}
                       </td>
+                      <td>{p.insured_name || '—'}</td>
                       <td>{p.provider || '—'}</td>
                       <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
                       <td style={{ fontSize: 12 }}>{p.policy_number || '—'}</td>
@@ -338,6 +342,10 @@ export default function InsurancePage() {
               <div className="form-group">
                 <label>Name *</label>
                 <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Life Insurance Policy" />
+              </div>
+              <div className="form-group">
+                <label>Insured Name</label>
+                <input value={form.insured_name} onChange={(e) => setForm({ ...form, insured_name: e.target.value })} placeholder="e.g. Self, Spouse, Child" />
               </div>
               <div className="form-group">
                 <label>Provider</label>

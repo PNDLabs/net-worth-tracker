@@ -142,7 +142,7 @@ router.post('/', (req, res) => {
     name, provider, type = 'other', policy_number,
     premium_amount, premium_frequency = 'monthly', coverage_amount,
     start_date, end_date, renewal_date, notes,
-    terms, covered_conditions,
+    terms, covered_conditions, insured_name,
   } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -155,9 +155,9 @@ router.post('/', (req, res) => {
 
   const conn = db.getDb();
   const duplicate = conn.prepare(
-    `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,''))`
-  ).get(name, provider || null);
-  if (duplicate) return res.status(409).json({ error: 'An insurance plan with the same name and provider already exists' });
+    `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,'')) AND lower(coalesce(insured_name,'')) = lower(coalesce(?,''))`
+  ).get(name, provider || null, insured_name || null);
+  if (duplicate) return res.status(409).json({ error: 'An insurance plan with the same name, provider, and insured name already exists' });
 
   const covJson = covered_conditions != null
     ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
@@ -167,8 +167,8 @@ router.post('/', (req, res) => {
     `INSERT INTO insurance_plans
        (name, provider, type, policy_number, premium_amount, premium_frequency,
         coverage_amount, start_date, end_date, renewal_date, notes,
-        terms, covered_conditions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        terms, covered_conditions, insured_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     name,
     provider || null,
@@ -183,6 +183,7 @@ router.post('/', (req, res) => {
     notes || null,
     terms || null,
     covJson,
+    insured_name || null,
   );
 
   const plan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(result.lastInsertRowid);
@@ -234,7 +235,7 @@ router.put('/:id', (req, res) => {
     name, provider, type, policy_number,
     premium_amount, premium_frequency, coverage_amount,
     start_date, end_date, renewal_date, notes,
-    terms, covered_conditions,
+    terms, covered_conditions, insured_name,
   } = req.body;
 
   const updated = {
@@ -253,6 +254,7 @@ router.put('/:id', (req, res) => {
     covered_conditions: covered_conditions !== undefined
       ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
       : existing.covered_conditions,
+    insured_name:      insured_name      !== undefined ? insured_name      : existing.insured_name,
   };
 
   if (!updated.name) return res.status(400).json({ error: 'name is required' });
@@ -267,14 +269,14 @@ router.put('/:id', (req, res) => {
     `UPDATE insurance_plans
      SET name=?, provider=?, type=?, policy_number=?, premium_amount=?,
          premium_frequency=?, coverage_amount=?, start_date=?, end_date=?,
-         renewal_date=?, notes=?, terms=?, covered_conditions=?,
+         renewal_date=?, notes=?, terms=?, covered_conditions=?, insured_name=?,
          updated_at=datetime('now')
      WHERE id=?`
   ).run(
     updated.name, updated.provider, updated.type, updated.policy_number,
     updated.premium_amount, updated.premium_frequency, updated.coverage_amount,
     updated.start_date, updated.end_date, updated.renewal_date, updated.notes,
-    updated.terms, updated.covered_conditions,
+    updated.terms, updated.covered_conditions, updated.insured_name,
     req.params.id,
   );
 
