@@ -13,6 +13,7 @@ const EMPTY = {
   name: '', provider: '', type: 'other', policy_number: '',
   premium_amount: '', premium_frequency: 'monthly', coverage_amount: '',
   start_date: '', end_date: '', renewal_date: '', notes: '',
+  terms: '', covered_conditions: [],
 };
 
 function statusBadge(plan) {
@@ -39,10 +40,25 @@ export default function InsurancePage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [showCoverageDetails, setShowCoverageDetails] = useState(false);
+  const [conditionInput, setConditionInput] = useState('');
+
   const [showAiModal, setShowAiModal] = useState(false);
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+
+  const [showQueryModal, setShowQueryModal] = useState(false);
+  const [queryText, setQueryText] = useState('');
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryError, setQueryError] = useState('');
+  const [queryResult, setQueryResult] = useState(null);
+
+  const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState('');
+  const [analyzeResult, setAnalyzeResult] = useState(null);
+
   const { currency } = useCurrency();
   const fmt = (v) => formatCurrency(v, currency);
 
@@ -60,7 +76,6 @@ export default function InsurancePage() {
         setAiError('No insurance records could be extracted. Try adding more detail or use the manual form.');
         return;
       }
-      // Pre-fill the form with the first extracted record and switch to manual entry
       const r = records[0];
       setForm({
         name: r.name || '',
@@ -74,11 +89,15 @@ export default function InsurancePage() {
         end_date: r.end_date || '',
         renewal_date: r.renewal_date || '',
         notes: r.notes || '',
+        // Pre-fill terms with the source text so the user doesn't have to paste again
+        terms: aiText,
+        covered_conditions: Array.isArray(r.covered_conditions) ? r.covered_conditions : [],
       });
       setEditing(null);
       setShowAiModal(false);
       setAiText('');
       setShowModal(true);
+      setShowCoverageDetails(true);
       setError('');
     } catch (e) {
       setAiError(e.message);
@@ -87,7 +106,15 @@ export default function InsurancePage() {
     }
   }
 
-  function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); setError(''); }
+  function openCreate() {
+    setEditing(null);
+    setForm(EMPTY);
+    setShowCoverageDetails(false);
+    setConditionInput('');
+    setShowModal(true);
+    setError('');
+  }
+
   function openEdit(p) {
     setEditing(p);
     setForm({
@@ -100,9 +127,26 @@ export default function InsurancePage() {
       policy_number: p.policy_number || '',
       provider: p.provider || '',
       notes: p.notes || '',
+      terms: p.terms || '',
+      covered_conditions: Array.isArray(p.covered_conditions) ? p.covered_conditions : [],
     });
+    setShowCoverageDetails(!!(p.terms || (Array.isArray(p.covered_conditions) && p.covered_conditions.length > 0)));
+    setConditionInput('');
     setShowModal(true);
     setError('');
+  }
+
+  function addConditionTag() {
+    const tag = conditionInput.trim();
+    if (!tag) return;
+    if (!form.covered_conditions.includes(tag)) {
+      setForm({ ...form, covered_conditions: [...form.covered_conditions, tag] });
+    }
+    setConditionInput('');
+  }
+
+  function removeConditionTag(tag) {
+    setForm({ ...form, covered_conditions: form.covered_conditions.filter(t => t !== tag) });
   }
 
   async function save() {
@@ -118,6 +162,8 @@ export default function InsurancePage() {
         policy_number: form.policy_number || null,
         provider: form.provider || null,
         notes: form.notes || null,
+        terms: form.terms || null,
+        covered_conditions: form.covered_conditions,
       };
       if (editing) await api.updateInsurance(editing.id, payload);
       else await api.createInsurance(payload);
@@ -130,6 +176,31 @@ export default function InsurancePage() {
     if (!confirm('Delete this insurance plan?')) return;
     try { await api.deleteInsurance(id); load(); }
     catch (e) { setError(e.message); }
+  }
+
+  async function runQuery() {
+    if (!queryText.trim()) return setQueryError('Please describe your situation.');
+    try {
+      setQueryLoading(true); setQueryError(''); setQueryResult(null);
+      const result = await api.queryInsuranceCoverage(queryText);
+      setQueryResult(result);
+    } catch (e) {
+      setQueryError(e.message);
+    } finally {
+      setQueryLoading(false);
+    }
+  }
+
+  async function runAnalysis() {
+    try {
+      setAnalyzeLoading(true); setAnalyzeError(''); setAnalyzeResult(null);
+      const result = await api.analyzeInsuranceCoverage();
+      setAnalyzeResult(result);
+    } catch (e) {
+      setAnalyzeError(e.message);
+    } finally {
+      setAnalyzeLoading(false);
+    }
   }
 
   const totalAnnual = plans.reduce((s, p) => s + (annualPremium(p) ?? 0), 0);
@@ -146,6 +217,8 @@ export default function InsurancePage() {
           </span>
         </h2>
         <div className="flex-gap">
+          <button className="btn-ghost" onClick={() => { setShowQueryModal(true); setQueryText(''); setQueryError(''); setQueryResult(null); }}>🔍 Ask Coverage</button>
+          <button className="btn-ghost" onClick={() => { setShowAnalyzeModal(true); setAnalyzeError(''); setAnalyzeResult(null); runAnalysis(); }}>📊 Analyze</button>
           <button className="btn-ghost" onClick={() => { setShowAiModal(true); setAiText(''); setAiError(''); }}>🤖 Parse from Text</button>
           <button className="btn-primary" onClick={openCreate}>+ Add Plan</button>
         </div>
@@ -180,11 +253,20 @@ export default function InsurancePage() {
                 {plans.map((p) => {
                   const badge = statusBadge(p);
                   const annual = annualPremium(p);
+                  const conditions = Array.isArray(p.covered_conditions) ? p.covered_conditions : [];
                   return (
                     <tr key={p.id}>
                       <td>
                         <strong>{p.name}</strong>
                         {p.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{p.notes}</div>}
+                        {conditions.length > 0 && (
+                          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                            {conditions.slice(0, 3).map(c => (
+                              <span key={c} style={{ fontSize: 10, background: 'var(--color-bg-alt, #f0f4ff)', color: 'var(--color-primary)', borderRadius: 8, padding: '1px 6px', border: '1px solid var(--color-border)' }}>{c}</span>
+                            ))}
+                            {conditions.length > 3 && <span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>+{conditions.length - 3} more</span>}
+                          </div>
+                        )}
                       </td>
                       <td>{p.provider || '—'}</td>
                       <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
@@ -245,9 +327,10 @@ export default function InsurancePage() {
         </div>
       )}
 
+      {/* ── Add / Edit Plan Modal ─────────────────────────────────────────────── */}
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680 }}>
             <h3>{editing ? 'Edit Insurance Plan' : 'Add Insurance Plan'}</h3>
             {error && <div className="error-msg">{error}</div>}
 
@@ -312,6 +395,57 @@ export default function InsurancePage() {
               <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
             </div>
 
+            {/* ── Coverage Details (collapsible) ─────────────────────────────── */}
+            <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 12, marginBottom: 12 }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ fontSize: 13, padding: '4px 0', marginBottom: showCoverageDetails ? 12 : 0 }}
+                onClick={() => setShowCoverageDetails(v => !v)}
+              >
+                {showCoverageDetails ? '▾' : '▸'} Coverage Details (terms &amp; conditions)
+              </button>
+
+              {showCoverageDetails && (
+                <>
+                  <div className="form-group mb-4">
+                    <label>Policy Terms / Key Inclusions &amp; Exclusions</label>
+                    <textarea
+                      value={form.terms}
+                      onChange={(e) => setForm({ ...form, terms: e.target.value })}
+                      rows={6}
+                      placeholder="Paste policy document text, key inclusions, exclusions, waiting periods, sub-limits, etc. This text is used by the AI coverage query feature."
+                      style={{ fontFamily: 'monospace', fontSize: 12 }}
+                    />
+                  </div>
+
+                  <div className="form-group mb-4">
+                    <label>Covered Conditions / Tags</label>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                      <input
+                        value={conditionInput}
+                        onChange={(e) => setConditionInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addConditionTag(); } }}
+                        placeholder="e.g. Hospitalisation, Surgery, Cancer…"
+                        style={{ flex: 1 }}
+                      />
+                      <button type="button" className="btn-ghost btn-sm" onClick={addConditionTag}>Add</button>
+                    </div>
+                    {form.covered_conditions.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {form.covered_conditions.map(tag => (
+                          <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--color-bg-alt, #f0f4ff)', color: 'var(--color-primary)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '2px 10px', fontSize: 12 }}>
+                            {tag}
+                            <button type="button" onClick={() => removeConditionTag(tag)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0, color: 'inherit' }}>×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn-primary" onClick={save}>Save</button>
@@ -320,12 +454,13 @@ export default function InsurancePage() {
         </div>
       )}
 
+      {/* ── Parse from Text Modal ─────────────────────────────────────────────── */}
       {showAiModal && (
         <div className="modal-backdrop" onClick={() => setShowAiModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <h3>🤖 Parse Insurance from Text</h3>
             <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-              Paste text from an insurance document, policy email, or any description. AI will extract the details and pre-fill the form.
+              Paste text from an insurance document, policy email, or any description. AI will extract the details and pre-fill the form. The pasted text will also be saved as the policy terms for future coverage queries.
             </p>
             {aiError && <div className="error-msg">{aiError}</div>}
             <div className="form-group mb-4">
@@ -347,6 +482,110 @@ export default function InsurancePage() {
           </div>
         </div>
       )}
+
+      {/* ── Ask Coverage Modal ────────────────────────────────────────────────── */}
+      {showQueryModal && (
+        <div className="modal-backdrop" onClick={() => setShowQueryModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <h3>🔍 Ask Coverage</h3>
+            <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+              Describe your situation and AI will tell you which of your insurance plans apply and in what order.
+            </p>
+            {queryError && <div className="error-msg">{queryError}</div>}
+            <div className="form-group mb-4">
+              <label>Describe your situation</label>
+              <textarea
+                rows={4}
+                value={queryText}
+                onChange={(e) => setQueryText(e.target.value)}
+                placeholder="e.g. I was hospitalised overnight for a fever. Which plan should I claim from first?"
+              />
+            </div>
+            <div className="modal-actions" style={{ marginBottom: queryResult ? 16 : 0 }}>
+              <button className="btn-ghost" onClick={() => setShowQueryModal(false)} disabled={queryLoading}>Close</button>
+              <button className="btn-primary" onClick={runQuery} disabled={queryLoading || !queryText.trim()}>
+                {queryLoading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Asking…</> : '🔍 Ask'}
+              </button>
+            </div>
+            {queryResult && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ background: 'var(--color-bg-alt, #f8f9fa)', borderRadius: 8, padding: '12px 16px', marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
+                  {queryResult.answer}
+                </div>
+                {queryResult.applicable_plans && queryResult.applicable_plans.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Applicable Plans</div>
+                    {queryResult.applicable_plans.map((p) => (
+                      <div key={p.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+                        <span style={{ minWidth: 22, height: 22, borderRadius: '50%', background: 'var(--color-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>{p.priority}</span>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</div>
+                          <div style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{p.reason}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Analyze Coverage Modal ────────────────────────────────────────────── */}
+      {showAnalyzeModal && (
+        <div className="modal-backdrop" onClick={() => setShowAnalyzeModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <h3>📊 Coverage Analysis</h3>
+            {analyzeLoading && (
+              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--color-text-muted)' }}>
+                <div className="spinner" style={{ margin: '0 auto 12px' }} />
+                Analysing your insurance portfolio…
+              </div>
+            )}
+            {analyzeError && <div className="error-msg">{analyzeError}</div>}
+            {analyzeResult && (
+              <div>
+                <AnalysisSection icon="🔄" title="Overlaps" items={analyzeResult.overlaps} emptyMsg="No overlaps detected." color="var(--color-warning, #e65100)" />
+                <AnalysisSection icon="⚠️" title="Coverage Gaps" items={analyzeResult.gaps} emptyMsg="No obvious gaps detected." color="var(--color-danger, #b71c1c)" />
+                <AnalysisSection icon="💡" title="Optimization Suggestions" items={analyzeResult.suggestions} emptyMsg="No suggestions." color="var(--color-success, #2e7d32)" />
+              </div>
+            )}
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <button className="btn-ghost" onClick={() => setShowAnalyzeModal(false)}>Close</button>
+              {!analyzeLoading && <button className="btn-ghost" onClick={() => { setAnalyzeResult(null); setAnalyzeError(''); runAnalysis(); }}>↺ Re-analyse</button>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+function AnalysisSection({ icon, title, items, emptyMsg, color }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <button
+        type="button"
+        className="btn-ghost"
+        style={{ fontWeight: 600, fontSize: 14, padding: '4px 0', display: 'flex', alignItems: 'center', gap: 6, color }}
+        onClick={() => setOpen(v => !v)}
+      >
+        {open ? '▾' : '▸'} {icon} {title}
+        <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--color-text-muted)', marginLeft: 4 }}>({items.length})</span>
+      </button>
+      {open && (
+        <ul style={{ margin: '6px 0 0 24px', padding: 0, listStyle: 'disc' }}>
+          {items.length === 0
+            ? <li style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{emptyMsg}</li>
+            : items.map((item, i) => (
+              <li key={i} style={{ fontSize: 13, marginBottom: 4, lineHeight: 1.5 }}>{item}</li>
+            ))
+          }
+        </ul>
+      )}
+    </div>
+  );
+}
+

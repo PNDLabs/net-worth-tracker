@@ -132,6 +132,15 @@ function runMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_sip_installments_date
       ON sip_installments(installment_date);
   `);
+
+  // ── Incremental migrations ──────────────────────────────────────────────────
+  // SQLite does not support IF NOT EXISTS on ALTER TABLE, so we use a try/catch
+  // to add columns that may already exist (idempotent on repeated startups).
+  const addColumnIfMissing = (table, column, type) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`); } catch (_) {}
+  };
+  addColumnIfMissing('insurance_plans', 'terms', 'TEXT');
+  addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
 }
 
 let _db;

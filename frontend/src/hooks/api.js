@@ -38,6 +38,8 @@ export const api = {
   createInsurance: (data) => apiFetch('/insurance', { method: 'POST', body: JSON.stringify(data) }),
   updateInsurance: (id, data) => apiFetch(`/insurance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteInsurance: (id) => apiFetch(`/insurance/${id}`, { method: 'DELETE' }),
+  queryInsuranceCoverage: (question) => apiFetch('/insurance/query', { method: 'POST', body: JSON.stringify({ question }) }),
+  analyzeInsuranceCoverage: () => apiFetch('/insurance/analysis'),
 
   // Settings
   getSettings: () => apiFetch('/settings'),

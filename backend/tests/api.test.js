@@ -861,3 +861,161 @@ describe('SIP Installments API', () => {
     expect(res.body.account_id).toBe(acc.body.id);
   });
 });
+
+// ─── Insurance Terms & Coverage AI ───────────────────────────────────────────
+
+describe('Insurance Terms & Coverage AI', () => {
+  test('POST /api/insurance - creates plan with terms and covered_conditions', async () => {
+    const res = await request(app).post('/api/insurance').send({
+      name: 'Health Plus',
+      provider: 'StarHealth',
+      type: 'health',
+      premium_amount: 1200,
+      terms: 'Covers hospitalisation, pre and post hospitalisation, day care procedures. Exclusions: cosmetic surgery, dental.',
+      covered_conditions: ['Hospitalisation', 'Day care', 'Pre/post hospitalisation'],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.terms).toBe('Covers hospitalisation, pre and post hospitalisation, day care procedures. Exclusions: cosmetic surgery, dental.');
+    expect(Array.isArray(res.body.covered_conditions)).toBe(true);
+    expect(res.body.covered_conditions).toContain('Hospitalisation');
+    expect(res.body.covered_conditions).toContain('Day care');
+  });
+
+  test('PUT /api/insurance/:id - updates terms and covered_conditions', async () => {
+    const created = await request(app).post('/api/insurance').send({
+      name: 'Term Life',
+      type: 'term_life',
+      premium_amount: 500,
+      terms: 'Initial terms',
+      covered_conditions: ['Death benefit'],
+    });
+    const res = await request(app).put(`/api/insurance/${created.body.id}`).send({
+      terms: 'Updated terms with critical illness rider',
+      covered_conditions: ['Death benefit', 'Critical illness'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.terms).toBe('Updated terms with critical illness rider');
+    expect(res.body.covered_conditions).toContain('Critical illness');
+  });
+
+  test('GET /api/insurance - returns covered_conditions as array', async () => {
+    await request(app).post('/api/insurance').send({
+      name: 'Dental Cover',
+      type: 'dental',
+      covered_conditions: ['Checkup', 'Extraction'],
+    });
+    const res = await request(app).get('/api/insurance');
+    expect(res.status).toBe(200);
+    const plan = res.body.find((p) => p.name === 'Dental Cover');
+    expect(Array.isArray(plan.covered_conditions)).toBe(true);
+    expect(plan.covered_conditions).toContain('Checkup');
+  });
+
+  test('GET /api/insurance/:id - returns covered_conditions as array for plans without the field', async () => {
+    // Create without covered_conditions to test fallback
+    const created = await request(app).post('/api/insurance').send({ name: 'Basic Plan', type: 'other' });
+    const res = await request(app).get(`/api/insurance/${created.body.id}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.covered_conditions)).toBe(true);
+    expect(res.body.covered_conditions).toEqual([]);
+  });
+
+  test('POST /api/insurance/query - returns 503 when AI is not enabled', async () => {
+    const savedKey = process.env.AI_API_KEY;
+    const savedOpenAiKey = process.env.OPENAI_API_KEY;
+    delete process.env.AI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+
+    const res = await request(app).post('/api/insurance/query').send({ question: 'I was hospitalised. Which plan applies?' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/AI is not enabled/i);
+
+    if (savedKey !== undefined) process.env.AI_API_KEY = savedKey;
+    if (savedOpenAiKey !== undefined) process.env.OPENAI_API_KEY = savedOpenAiKey;
+  });
+
+  test('POST /api/insurance/query - returns 400 when question is missing', async () => {
+    process.env.AI_API_KEY = 'test-key';
+    const res = await request(app).post('/api/insurance/query').send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/question is required/i);
+    delete process.env.AI_API_KEY;
+  });
+
+  test('GET /api/insurance/analysis - returns 503 when AI is not enabled', async () => {
+    const savedKey = process.env.AI_API_KEY;
+    const savedOpenAiKey = process.env.OPENAI_API_KEY;
+    delete process.env.AI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+
+    const res = await request(app).get('/api/insurance/analysis');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/AI is not enabled/i);
+
+    if (savedKey !== undefined) process.env.AI_API_KEY = savedKey;
+    if (savedOpenAiKey !== undefined) process.env.OPENAI_API_KEY = savedOpenAiKey;
+  });
+
+  test('GET /api/insurance/analysis - returns empty analysis when no plans exist', async () => {
+    // Need AI key set but we mock the fetch so it never actually calls out
+    process.env.AI_API_KEY = 'test-key';
+
+    // With no plans the route short-circuits before calling AI
+    const res = await request(app).get('/api/insurance/analysis');
+    expect(res.status).toBe(200);
+    expect(res.body.overlaps).toEqual([]);
+    expect(Array.isArray(res.body.gaps)).toBe(true);
+    expect(res.body.suggestions).toEqual([]);
+
+    delete process.env.AI_API_KEY;
+  });
+
+  test('POST /api/insurance/query - returns empty answer when no plans exist', async () => {
+    process.env.AI_API_KEY = 'test-key';
+
+    const res = await request(app).post('/api/insurance/query').send({ question: 'Which plan covers surgery?' });
+    expect(res.status).toBe(200);
+    expect(res.body.applicable_plans).toEqual([]);
+    expect(typeof res.body.answer).toBe('string');
+
+    delete process.env.AI_API_KEY;
+  });
+
+  test('GET /api/insurance/analysis - uses mocked AI response when plans exist', async () => {
+    process.env.AI_API_KEY = 'test-key';
+
+    await request(app).post('/api/insurance').send({
+      name: 'Health A', type: 'health', premium_amount: 1000,
+      covered_conditions: ['Hospitalisation'],
+    });
+    await request(app).post('/api/insurance').send({
+      name: 'Health B', type: 'health', premium_amount: 1200,
+      covered_conditions: ['Hospitalisation', 'Critical illness'],
+    });
+
+    // Mock fetch so the AI call returns a deterministic response
+    const mockAiResponse = {
+      overlaps: ['Health A and Health B both cover Hospitalisation.'],
+      gaps: ['No disability insurance detected.'],
+      suggestions: ['Consider dropping Health A since Health B provides a superset of coverage.'],
+    };
+
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify(mockAiResponse) } }],
+      }),
+    });
+
+    const res = await request(app).get('/api/insurance/analysis');
+
+    global.fetch = originalFetch;
+    delete process.env.AI_API_KEY;
+
+    expect(res.status).toBe(200);
+    expect(res.body.overlaps).toEqual(mockAiResponse.overlaps);
+    expect(res.body.gaps).toEqual(mockAiResponse.gaps);
+    expect(res.body.suggestions).toEqual(mockAiResponse.suggestions);
+  });
+});
