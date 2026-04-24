@@ -138,11 +138,14 @@ router.post('/csv', upload.single('file'), (req, res) => {
       );
 
     } else if (importType === 'insurance') {
-      const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes } = row;
+      const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
       if (!name) throw new Error('name is required');
+      const covJson = covered_conditions != null
+        ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
+        : null;
       conn.prepare(
-        `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         String(name), provider ? String(provider) : null, String(type),
         policy_number ? String(policy_number) : null,
@@ -152,7 +155,10 @@ router.post('/csv', upload.single('file'), (req, res) => {
         start_date ? String(start_date) : null,
         end_date ? String(end_date) : null,
         renewal_date ? String(renewal_date) : null,
-        notes ? String(notes) : null
+        notes ? String(notes) : null,
+        terms ? String(terms) : null,
+        covJson,
+        insured_name ? String(insured_name) : null
       );
 
     } else if (importType === 'sip') {
@@ -250,13 +256,13 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
         );
 
       } else if (importType === 'insurance') {
-        const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions } = row;
+        const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
         if (!name) throw new Error('name is required');
         const covJson = covered_conditions != null
           ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
           : null;
         conn.prepare(
-          `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           String(name), provider ? String(provider) : null, String(type),
           policy_number ? String(policy_number) : null,
@@ -268,7 +274,8 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           renewal_date ? String(renewal_date) : null,
           notes ? String(notes) : null,
           terms ? String(terms) : null,
-          covJson
+          covJson,
+          insured_name ? String(insured_name) : null
         );
 
       } else if (importType === 'sip') {
@@ -463,13 +470,13 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             minimum_payment != null ? Number(minimum_payment) : null
           );
         } else if (importType === 'insurance') {
-          const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions } = row;
+          const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
           if (!name) throw new Error('name is required');
           const covJson = covered_conditions != null
             ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
             : null;
           conn.prepare(
-            `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             String(name), provider ? String(provider) : null, String(type),
             policy_number ? String(policy_number) : null,
@@ -481,7 +488,8 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             renewal_date ? String(renewal_date) : null,
             notes ? String(notes) : null,
             terms ? String(terms) : null,
-            covJson
+            covJson,
+            insured_name ? String(insured_name) : null
           );
         } else if (importType === 'sip') {
           const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
