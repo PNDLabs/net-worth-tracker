@@ -342,10 +342,13 @@ function normalizeDate(s) {
 
 /**
  * Detect the ISO 4217 currency code from document text.
+ * Scans the first 5 000 characters (enough to cover document headers and the first
+ * few pages of a statement) and scores currency indicators by frequency.
  * Returns 'USD' as the default when no clear indicator is found.
  */
 function detectCurrency(text) {
-  // Check a larger slice for currency indicators to improve detection
+  // 5 000 chars covers the document header and first pages without reading the entire
+  // document, balancing detection accuracy against performance.
   const sample = text.slice(0, 5000);
   // Count occurrences to determine dominant currency
   const inrScore =
@@ -431,10 +434,16 @@ function extractInstitution(text) {
  * Extract currency amounts from a string, largest first.
  * Handles USD ($), INR (₹ / Rs.), EUR (€), GBP (£) prefixes and
  * both Western (1,000,000) and Indian (10,00,000) number formats.
+ *
+ * The regex enforces either:
+ *   – Western grouping: 1–3 digits then zero-or-more groups of exactly 3 digits (1,000,000)
+ *   – Indian grouping: 1–3 digits then zero-or-more groups of exactly 2 digits (10,00,000)
+ * Each individual number must be consistently Western or Indian; arbitrary mixed
+ * comma placement (e.g. "1,2,3") will not be matched.
  */
 function extractAmounts(text) {
-  // Match optional currency prefix then a number that may use commas in any grouping
-  const re = /(?:\$|₹|Rs\.?|€|£|¥)?\s*((?:\d{1,3})(?:,\d{2,3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g;
+  // Two alternatives: Western (groups of 3) or Indian (first group 1-3, then groups of 2)
+  const re = /(?:\$|₹|Rs\.?|€|£|¥)?\s*((?:\d{1,3})(?:,\d{3})+(?:\.\d{1,2})?|(?:\d{1,3})(?:,\d{2})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g;
   const amounts = [];
   let m;
   while ((m = re.exec(text)) !== null) {
@@ -483,8 +492,8 @@ function parseBankStatement(text) {
         const context = (before + m[0]).toLowerCase();
         let type = 'other';
         // Check FD only in the matched text itself to avoid contaminating nearby accounts
-        if (/fixed\s*deposit|fd\b/.test(matchLine)) type = 'cd';
-        else if (/recurring\s*deposit|rd\b/.test(matchLine)) type = 'cd';
+        if (/fixed\s*deposit|\bfd\b/.test(matchLine)) type = 'cd';
+        else if (/recurring\s*deposit|\brd\b/.test(matchLine)) type = 'cd';
         else if (/checking|current\s+account/.test(context)) type = 'checking';
         else if (/saving/.test(context)) type = 'savings';
         else if (/money\s*market/.test(context)) type = 'money_market';
@@ -801,11 +810,20 @@ async function parseStatement(text, options = {}) {
           const refined = await validateAndRefineWithAI(text, aiResult, options);
           // Accept the refined result when it has records and its import_type is either
           // unchanged (most common) or clearly correcting an obvious misclassification.
+          // When the import_type changes we additionally verify that the records contain
+          // the required key for the new type (to avoid schema mismatches).
           // We still require it not to silently drop records compared to Pass 1.
+          const REQUIRED_KEY = { accounts: 'balance', assets: 'current_value', liabilities: 'current_balance', insurance: 'premium_amount', sip: 'amount' };
+          const typeChanged = refined && refined.import_type !== aiResult.import_type;
+          const schemaOk = !typeChanged ||
+            (Array.isArray(refined.records) && refined.records.length > 0 &&
+             REQUIRED_KEY[refined.import_type] &&
+             refined.records[0][REQUIRED_KEY[refined.import_type]] !== undefined);
           if (
             refined &&
             Array.isArray(refined.records) &&
-            refined.records.length >= aiResult.records.length
+            refined.records.length >= aiResult.records.length &&
+            schemaOk
           ) {
             pass2Result = refined;
           }
