@@ -236,8 +236,9 @@ export async function importAllData(payload) {
     const { lastId } = await run(
       `INSERT INTO insurance_plans
          (name, provider, type, policy_number, premium_amount, premium_frequency,
-          coverage_amount, start_date, end_date, renewal_date, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          coverage_amount, start_date, end_date, renewal_date, notes,
+          terms, covered_conditions, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         String(row.name), row.provider ? String(row.provider) : null,
         String(row.type || 'other'), row.policy_number ? String(row.policy_number) : null,
@@ -248,6 +249,12 @@ export async function importAllData(payload) {
         row.end_date ? String(row.end_date) : null,
         row.renewal_date ? String(row.renewal_date) : null,
         row.notes ? String(row.notes) : null,
+        row.terms ? String(row.terms) : null,
+        row.covered_conditions != null
+          ? (typeof row.covered_conditions === 'string'
+            ? row.covered_conditions
+            : JSON.stringify(row.covered_conditions))
+          : null,
         row.created_at || null, row.updated_at || null,
       ]
     );

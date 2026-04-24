@@ -13,4 +13,4 @@ export const APP_VERSION = '1.0.0';
  * backwards-incompatible way.  Exports produced by older schema versions
  * whose number is ≤ CURRENT_SCHEMA_VERSION are always accepted.
  */
-export const EXPORT_SCHEMA_VERSION = 1;
+export const EXPORT_SCHEMA_VERSION = 2;
