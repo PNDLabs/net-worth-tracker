@@ -118,3 +118,52 @@ export async function deleteInsurance(id) {
   await run('DELETE FROM insurance_plans WHERE id = ?', [id]);
   return { message: 'Insurance plan deleted' };
 }
+
+export async function createAssetFromInsurance(id) {
+  const plan = await getInsurancePlan(id);
+
+  if (plan.type !== 'auto') {
+    throw new Error('Asset creation from IDV is only supported for auto insurance plans');
+  }
+  if (plan.coverage_amount == null || plan.coverage_amount <= 0) {
+    throw new Error('The insurance plan must have a coverage_amount (IDV) to create a vehicle asset');
+  }
+
+  const assetName = plan.insured_name && plan.insured_name.trim()
+    ? plan.insured_name.trim()
+    : plan.name;
+
+  const dup = await query(`SELECT * FROM assets WHERE lower(name)=lower(?)`, [assetName]);
+  if (dup.length) {
+    throw Object.assign(
+      new Error(`A vehicle asset named "${assetName}" already exists`),
+      { status: 409, asset: dup[0] }
+    );
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const { lastId: assetId } = await run(
+    `INSERT INTO assets (name, category, acquisition_date, current_value, notes) VALUES (?, 'vehicle', ?, ?, ?)`,
+    [
+      assetName,
+      plan.start_date ?? null,
+      plan.coverage_amount,
+      `Auto-created from insurance policy: ${plan.name} (IDV: ${plan.coverage_amount})`,
+    ]
+  );
+
+  await run(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('asset', ?, ?, ?, 'Initial value from insurance IDV')`,
+    [assetId, plan.coverage_amount, todayStr]
+  );
+
+  await run(
+    `UPDATE insurance_plans SET linked_asset_id=?, updated_at=datetime('now') WHERE id=?`,
+    [assetId, id]
+  );
+
+  const assetRows = await query('SELECT * FROM assets WHERE id = ?', [assetId]);
+  const planRows  = await query('SELECT * FROM insurance_plans WHERE id = ?', [id]);
+  return { asset: assetRows[0], plan: hydratePlan(planRows[0]) };
+}

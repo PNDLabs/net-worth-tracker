@@ -284,6 +284,63 @@ router.put('/:id', (req, res) => {
   res.json(hydratePlan(plan));
 });
 
+// ── POST /api/insurance/:id/create-asset ──────────────────────────────────────
+// Creates a vehicle asset from an auto insurance plan using its IDV
+// (coverage_amount) and links it back via linked_asset_id.
+
+router.post('/:id/create-asset', (req, res) => {
+  const conn = db.getDb();
+  const plan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(req.params.id);
+  if (!plan) return res.status(404).json({ error: 'Insurance plan not found' });
+
+  if (plan.type !== 'auto') {
+    return res.status(400).json({ error: 'Asset creation from IDV is only supported for auto insurance plans' });
+  }
+  if (plan.coverage_amount == null || plan.coverage_amount <= 0) {
+    return res.status(400).json({ error: 'The insurance plan must have a coverage_amount (IDV) to create a vehicle asset' });
+  }
+
+  // Derive a sensible name: prefer insured_name, fall back to plan name
+  const assetName = plan.insured_name && plan.insured_name.trim()
+    ? plan.insured_name.trim()
+    : plan.name;
+
+  // Check if a vehicle asset with this name already exists
+  const existing = conn.prepare(`SELECT * FROM assets WHERE lower(name) = lower(?)`).get(assetName);
+  if (existing) {
+    return res.status(409).json({
+      error: `A vehicle asset named "${assetName}" already exists`,
+      asset: existing,
+    });
+  }
+
+  // Create the vehicle asset with IDV as current_value
+  const assetResult = conn.prepare(
+    `INSERT INTO assets (name, category, acquisition_date, current_value, notes)
+     VALUES (?, 'vehicle', ?, ?, ?)`
+  ).run(
+    assetName,
+    plan.start_date || null,
+    plan.coverage_amount,
+    `Auto-created from insurance policy: ${plan.name} (IDV: ${plan.coverage_amount})`,
+  );
+  const asset = conn.prepare('SELECT * FROM assets WHERE id = ?').get(assetResult.lastInsertRowid);
+
+  // Record initial value history
+  conn.prepare(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('asset', ?, ?, date('now'), 'Initial value from insurance IDV')`
+  ).run(asset.id, asset.current_value);
+
+  // Link the asset back to the insurance plan
+  conn.prepare(
+    `UPDATE insurance_plans SET linked_asset_id=?, updated_at=datetime('now') WHERE id=?`
+  ).run(asset.id, plan.id);
+
+  const updatedPlan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(plan.id);
+  res.status(201).json({ asset, plan: hydratePlan(updatedPlan) });
+});
+
 // ── DELETE /api/insurance/:id ──────────────────────────────────────────────────
 
 router.delete('/:id', (req, res) => {
