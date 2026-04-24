@@ -200,7 +200,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
 }
 
 // ─── Main ImportPage ──────────────────────────────────────────────────────────
-export default function ImportPage({ onRefresh }) {
+export default function ImportPage() {
   const [importType, setImportType] = useState('accounts');
   const [csvFile, setCsvFile] = useState(null);
   const [jsonText, setJsonText] = useState('');
@@ -224,7 +224,6 @@ export default function ImportPage({ onRefresh }) {
       setLoading(true); setError(''); setResult(null);
       const res = await api.importCsv(importType, csvFile);
       setResult(res);
-      if (onRefresh) onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -239,7 +238,6 @@ export default function ImportPage({ onRefresh }) {
       setLoading(true); setError(''); setResult(null);
       const res = await api.importJson(importType, records);
       setResult(res);
-      if (onRefresh) onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -281,7 +279,6 @@ export default function ImportPage({ onRefresh }) {
       setPdfPreview(null);
       setPdfFile(null);
       setPdfPassword('');
-      if (onRefresh) onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
