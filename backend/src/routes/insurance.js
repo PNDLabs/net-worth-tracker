@@ -77,7 +77,7 @@ Return ONLY a JSON object in this exact format – no markdown fences, no prose:
 If no plans apply, return an empty applicable_plans array and explain why in the answer field.
 Order applicable_plans by priority (most relevant first).`;
 
-const ANALYSIS_SYSTEM_PROMPT = `You are an insurance portfolio analyst. You will be given a list of insurance plans (in JSON) with their details and coverage terms. Analyse this portfolio for:
+const ANALYSIS_SYSTEM_PROMPT = `You are an insurance portfolio analyst. You will be given a list of insurance plans (in JSON) with their details and coverage terms. Analyze this portfolio for:
 1. Overlaps – two or more plans that cover the same risk/condition.
 2. Gaps – common risks that are not covered by any plan.
 3. Optimization suggestions – concrete recommendations to reduce premiums, eliminate redundant coverage, or fill gaps.
@@ -114,7 +114,7 @@ router.get('/analysis', async (req, res) => {
       return res.json({ overlaps: [], gaps: ['No insurance plans have been added yet.'], suggestions: [] });
     }
 
-    const userMessage = `Analyse this insurance portfolio:\n${JSON.stringify(plans, null, 2)}`;
+    const userMessage = `Analyze this insurance portfolio:\n${JSON.stringify(plans, null, 2)}`;
     const result = await callAI(ANALYSIS_SYSTEM_PROMPT, userMessage);
 
     res.json({

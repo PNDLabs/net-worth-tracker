@@ -540,7 +540,7 @@ export default function InsurancePage() {
             {analyzeLoading && (
               <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--color-text-muted)' }}>
                 <div className="spinner" style={{ margin: '0 auto 12px' }} />
-                Analysing your insurance portfolio…
+                Analyzing your insurance portfolio…
               </div>
             )}
             {analyzeError && <div className="error-msg">{analyzeError}</div>}
