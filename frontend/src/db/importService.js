@@ -47,6 +47,20 @@ async function isDuplicateRecord(importType, row) {
   return false;
 }
 
+/**
+ * Check which records (by index) are duplicates in the local SQLite DB.
+ * Returns { duplicates: [index, ...] }.  SIP installments are never flagged.
+ */
+export async function checkDuplicates(importType, records) {
+  const duplicates = [];
+  for (let i = 0; i < records.length; i++) {
+    if (importType !== 'sip' && await isDuplicateRecord(importType, records[i])) {
+      duplicates.push(i);
+    }
+  }
+  return { duplicates };
+}
+
 // ─── Single-row insert (mirrors CSV importRow logic) ─────────────────────────
 
 async function insertRow(importType, row) {
@@ -108,14 +122,15 @@ async function insertRow(importType, row) {
 /**
  * Import an array of pre-parsed records directly into SQLite.
  * Skips duplicates (for everything except SIP which allows duplicates).
+ * Records with _forceImport: true bypass the duplicate check.
  */
 export async function importRecords(importType, records) {
-  const results = { imported: 0, skipped: 0, errors: [] };
+  const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
-      const isDup = importType !== 'sip' && await isDuplicateRecord(importType, row);
-      if (isDup) { results.skipped++; continue; }
+      const isDup = importType !== 'sip' && !row._forceImport && await isDuplicateRecord(importType, row);
+      if (isDup) { results.skipped++; results.duplicates++; continue; }
       await insertRow(importType, row);
       results.imported++;
     } catch (err) {

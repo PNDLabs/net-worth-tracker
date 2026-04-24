@@ -133,6 +133,8 @@ export const api = {
 
   importCsv: (importType, file) => importSvc.importCsv(importType, file),
 
+  checkDuplicates: (importType, records) => importSvc.checkDuplicates(importType, records),
+
   previewPdf: async (file, password) => {
     const aiConfig = await getAiSettings();
     const options = aiConfig.apiKey ? aiConfig : {};

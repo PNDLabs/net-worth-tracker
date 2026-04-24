@@ -680,6 +680,7 @@ describe('Deduplication', () => {
     expect(res.status).toBe(200);
     expect(res.body.imported).toBe(1);
     expect(res.body.skipped).toBe(1);
+    expect(res.body.duplicates).toBe(1);
   });
 
   test('POST /api/import/json - skips duplicate assets silently', async () => {
@@ -694,6 +695,64 @@ describe('Deduplication', () => {
     expect(res.status).toBe(200);
     expect(res.body.imported).toBe(1);
     expect(res.body.skipped).toBe(1);
+    expect(res.body.duplicates).toBe(1);
+  });
+
+  test('POST /api/import/check-duplicates - returns indices of duplicate records', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Savings', institution: 'BoA', type: 'savings', balance: 1000 });
+    const res = await request(app).post('/api/import/check-duplicates').send({
+      import_type: 'accounts',
+      records: [
+        { name: 'Savings', institution: 'BoA' },
+        { name: 'Checking', institution: 'Chase' },
+        { name: 'savings', institution: 'boa' }, // case-insensitive match
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.duplicates).toEqual([0, 2]);
+  });
+
+  test('POST /api/import/check-duplicates - returns empty array when no duplicates', async () => {
+    const res = await request(app).post('/api/import/check-duplicates').send({
+      import_type: 'assets',
+      records: [{ name: 'New Asset' }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.duplicates).toEqual([]);
+  });
+
+  test('POST /api/import/check-duplicates - never flags SIP as duplicate', async () => {
+    const res = await request(app).post('/api/import/check-duplicates').send({
+      import_type: 'sip',
+      records: [{ name: 'Monthly SIP', amount: 5000 }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.duplicates).toEqual([]);
+  });
+
+  test('POST /api/import/json - _forceImport bypasses duplicate check', async () => {
+    await request(app).post('/api/assets').send({ name: 'My House', category: 'real_estate', current_value: 300000 });
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'assets',
+      records: [{ name: 'My House', category: 'real_estate', current_value: 320000, _forceImport: true }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.duplicates).toBe(0);
+  });
+
+  test('POST /api/import/pdf - _forceImport in previewed_records bypasses duplicate check', async () => {
+    await request(app).post('/api/accounts').send({ name: 'Force Account', institution: 'TestBank', type: 'savings', balance: 1000 });
+    const res = await request(app)
+      .post('/api/import/pdf')
+      .attach('file', Buffer.from('%PDF-1.4'), 'test.pdf')
+      .field('import_type', 'accounts')
+      .field('previewed_records', JSON.stringify([
+        { name: 'Force Account', institution: 'TestBank', type: 'savings', currency: 'USD', balance: 2000, _forceImport: true },
+      ]));
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.duplicates).toBe(0);
   });
 });
 
