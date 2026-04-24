@@ -122,6 +122,12 @@ export const api = {
       body: JSON.stringify({ text, import_type: importType }),
     }),
 
+  checkDuplicates: (importType, records) =>
+    apiFetch('/import/check-duplicates', {
+      method: 'POST',
+      body: JSON.stringify({ import_type: importType, records }),
+    }),
+
   // Export / import full data
   exportData: () => apiFetch('/export'),
 

@@ -85,7 +85,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
   }
 
   const conn = db.getDb();
-  const results = { imported: 0, skipped: 0, errors: [] };
+  const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
 
   const normalizeKeys = (obj) => {
     const out = {};
@@ -181,7 +181,9 @@ router.post('/csv', upload.single('file'), (req, res) => {
       results.imported++;
     } catch (err) {
       results.skipped++;
-      if (!(err instanceof DuplicateError)) {
+      if (err instanceof DuplicateError) {
+        results.duplicates++;
+      } else {
         results.errors.push({ row: i + 2, message: err.message });
       }
     }
@@ -206,14 +208,14 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   }
 
   const conn = db.getDb();
-  const results = { imported: 0, skipped: 0, errors: [] };
+  const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
 
   const isDuplicateJson = (row) => isDuplicateRecord(conn, importType, row);
 
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
-      if (isDuplicateJson(row)) { results.skipped++; continue; }
+      if (!row._forceImport && isDuplicateJson(row)) { results.skipped++; results.duplicates++; continue; }
 
       if (importType === 'accounts') {
         const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
@@ -296,6 +298,30 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   res.json(results);
 });
 
+
+/**
+ * POST /api/import/check-duplicates
+ * Body: { import_type, records }
+ * Returns: { duplicates: [index, ...] } – indices of records that already exist in the DB.
+ * SIP installments are never flagged (each payment is a unique event).
+ */
+router.post('/check-duplicates', express.json({ limit: '1mb' }), (req, res) => {
+  const { import_type: importType, records } = req.body || {};
+  if (!VALID_IMPORT_TYPES.includes(importType)) {
+    return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
+  }
+  if (!Array.isArray(records)) {
+    return res.status(400).json({ error: 'records must be an array' });
+  }
+  const conn = db.getDb();
+  const duplicates = [];
+  for (let i = 0; i < records.length; i++) {
+    if (importType !== 'sip' && isDuplicateRecord(conn, importType, records[i])) {
+      duplicates.push(i);
+    }
+  }
+  res.json({ duplicates });
+});
 
 /**
  * Returns an error response if the uploaded file is not a PDF, otherwise null.
@@ -398,14 +424,14 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     }
 
     const conn = db.getDb();
-    const results = { imported: 0, skipped: 0, errors: [], method: parsed.method };
+    const results = { imported: 0, skipped: 0, duplicates: 0, errors: [], method: parsed.method };
 
     const isDuplicatePdf = (row) => isDuplicateRecord(conn, importType, row);
 
     for (let i = 0; i < parsed.records.length; i++) {
       const row = parsed.records[i];
       try {
-        if (isDuplicatePdf(row)) { results.skipped++; continue; }
+        if (!row._forceImport && isDuplicatePdf(row)) { results.skipped++; results.duplicates++; continue; }
 
         if (importType === 'accounts') {
           const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;

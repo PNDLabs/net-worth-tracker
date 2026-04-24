@@ -36,6 +36,50 @@ HDFC Mid-Cap Opportunities SIP,,5000,,,2025-01-15,`,
 function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [importType, setImportType] = useState(preview.import_type);
   const validationNotes = preview.validation_notes || [];
+  const [duplicateIndices, setDuplicateIndices] = useState(new Set());
+  const [forceImportIndices, setForceImportIndices] = useState(new Set());
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  // Cache check results per import type so switching back doesn't re-query the DB.
+  const dupCacheRef = useState(() => ({}))[0];
+
+  useEffect(() => {
+    if (!preview.records || preview.records.length === 0) return;
+    if (dupCacheRef[importType] !== undefined) {
+      setDuplicateIndices(dupCacheRef[importType]);
+      setForceImportIndices(new Set());
+      return;
+    }
+    let cancelled = false;
+    setCheckingDuplicates(true);
+    setForceImportIndices(new Set());
+    api.checkDuplicates(importType, preview.records)
+      .then((res) => {
+        const result = new Set(res.duplicates || []);
+        dupCacheRef[importType] = result;
+        if (!cancelled) setDuplicateIndices(result);
+      })
+      .catch(() => {
+        dupCacheRef[importType] = new Set();
+        if (!cancelled) setDuplicateIndices(new Set());
+      })
+      .finally(() => { if (!cancelled) setCheckingDuplicates(false); });
+    return () => { cancelled = true; };
+  }, [importType, preview]); // re-run when type changes or a fresh preview is loaded
+
+  const toggleForce = (idx) => {
+    setForceImportIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  const handleConfirm = () => {
+    const finalRecords = preview.records.map((r, i) =>
+      forceImportIndices.has(i) ? { ...r, _forceImport: true } : r
+    );
+    onConfirm(importType, finalRecords);
+  };
 
   if (!preview) return null;
   return (
@@ -67,10 +111,25 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         </select>
       </div>
 
+      {checkingDuplicates && (
+        <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 13, background: 'var(--color-surface-2)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', marginBottom: 12 }}>
+          🔍 Checking for existing records…
+        </div>
+      )}
+
+      {!checkingDuplicates && duplicateIndices.size > 0 && (
+        <div style={{ padding: '10px 14px', borderRadius: 6, fontSize: 13, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 12 }}>
+          ⚠️ <strong>{duplicateIndices.size}</strong> record(s) appear to already exist (matching name was found).
+          Check <strong>"Import anyway"</strong> on each row you want to create as a new entry.
+          Rows left unchecked will be skipped.
+        </div>
+      )}
+
       <div className="table-container" style={{ marginBottom: 16, maxHeight: 300, overflowY: 'auto' }}>
         <table>
           <thead>
             <tr>
+              {duplicateIndices.size > 0 && <th style={{ whiteSpace: 'nowrap' }}>Status</th>}
               {Object.keys(preview.records[0] || {}).map((k) => (
                 <th key={k}>{k.replace(/_/g, ' ')}</th>
               ))}
@@ -78,7 +137,25 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
           </thead>
           <tbody>
             {preview.records.map((r, i) => (
-              <tr key={i}>
+              <tr key={i} style={duplicateIndices.has(i) && !forceImportIndices.has(i) ? { background: '#fff8e1' } : {}}>
+                {duplicateIndices.size > 0 && (
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {duplicateIndices.has(i) ? (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={forceImportIndices.has(i)}
+                          onChange={() => toggleForce(i)}
+                        />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: forceImportIndices.has(i) ? 'var(--color-success)' : '#e65100' }}>
+                          {forceImportIndices.has(i) ? '✅ Import anyway' : '⚠️ Duplicate — skip'}
+                        </span>
+                      </label>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--color-success)' }}>✅ New</span>
+                    )}
+                  </td>
+                )}
                 {Object.values(r).map((v, j) => (
                   <td key={j}>{v === null ? '—' : String(v)}</td>
                 ))}
@@ -111,8 +188,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
       )}
 
       <div style={{ display: 'flex', gap: 10 }}>
-        <button className="btn-primary" onClick={() => onConfirm(importType)} disabled={loading}>
-          {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</> : `✅ Confirm & Import ${preview.records.length} Record(s)`}
+        <button className="btn-primary" onClick={handleConfirm} disabled={loading || checkingDuplicates}>
+          {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</>
+            : checkingDuplicates ? '🔍 Checking…'
+            : `✅ Confirm & Import ${preview.records.length} Record(s)`}
         </button>
         <button className="btn-ghost" onClick={onCancel} disabled={loading}>Cancel</button>
       </div>
@@ -188,10 +267,10 @@ export default function ImportPage({ onRefresh }) {
     } finally { setLoading(false); }
   }
 
-  async function confirmPdfImport(overrideType) {
+  async function confirmPdfImport(overrideType, finalRecords) {
     try {
       setLoading(true); setError('');
-      const res = await api.importPdf(pdfFile, pdfPassword, overrideType, pdfPreview?.records);
+      const res = await api.importPdf(pdfFile, pdfPassword, overrideType, finalRecords || pdfPreview?.records);
       setResult(res);
       setPdfPreview(null);
       setPdfFile(null);
@@ -316,9 +395,14 @@ export default function ImportPage({ onRefresh }) {
 
             {error && <div className="error-msg">{error}</div>}
             {result && (
-              <div className={result.skipped === 0 ? 'success-msg' : 'error-msg'}>
-                ✅ Imported <strong>{result.imported}</strong> records.
-                {result.skipped > 0 && <> ⚠️ Skipped <strong>{result.skipped}</strong> rows with errors.</>}
+              <div className={(result.skipped - (result.duplicates || 0)) > 0 ? 'error-msg' : 'success-msg'}>
+                ✅ Imported <strong>{result.imported}</strong> record(s).
+                {result.duplicates > 0 && (
+                  <> ⚠️ Skipped <strong>{result.duplicates}</strong> duplicate(s) (already exist).</>
+                )}
+                {(result.skipped - (result.duplicates || 0)) > 0 && (
+                  <> ❌ <strong>{result.skipped - (result.duplicates || 0)}</strong> row(s) had errors.</>
+                )}
                 {result.errors?.length > 0 && (
                   <ul style={{ marginTop: 6, paddingLeft: 16 }}>
                     {result.errors.map((e, i) => <li key={i}>Row {e.row}: {e.message}</li>)}
