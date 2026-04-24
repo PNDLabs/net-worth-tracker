@@ -409,9 +409,17 @@ function detectStatementType(text) {
 
   // EPFO / Provident Fund passbook → always accounts (pension), must be checked BEFORE
   // the liability heuristic to prevent misclassification
-  if (
-    /\b(epfo|uan|universal\s+account\s+number|employee\s+provident\s+fund|employees['']?\s+provident|epf\s+passbook|pf\s+passbook|provident\s+fund\s+passbook)\b/.test(lower)
-  ) return 'accounts';
+  const EPFO_KEYWORDS = [
+    'epfo',
+    'uan',
+    'universal account number',
+    'employee provident fund',
+    'epf passbook',
+    'pf passbook',
+    'provident fund passbook',
+  ];
+  if (EPFO_KEYWORDS.some((kw) => lower.includes(kw)) ||
+      /\bemployees['']?\s+provident\b/.test(lower)) return 'accounts';
 
   // Strong signals for SIP / mutual fund transaction statements
   if (
@@ -496,7 +504,9 @@ function parseBankStatement(text) {
     // Fixed Deposit / FD balances (common in Indian bank statements)
     /(?:fixed\s+deposit|fd)\s+(?:balance|amount|principal)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
     // EPFO / PF total corpus / net balance (common in EPFO passbooks)
-    /(?:net\s+balance|total\s+(?:pf\s+)?(?:balance|corpus|amount))[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /net\s+balance[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /total\s+pf\s+(?:balance|corpus|amount)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /total\s+(?:balance|corpus|amount)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
   ];
 
   const foundBalances = new Set();
