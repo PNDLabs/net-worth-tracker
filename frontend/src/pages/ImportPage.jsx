@@ -39,18 +39,32 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [duplicateIndices, setDuplicateIndices] = useState(new Set());
   const [forceImportIndices, setForceImportIndices] = useState(new Set());
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  // Cache check results per import type so switching back doesn't re-query the DB.
+  const dupCacheRef = useState(() => ({}))[0];
 
   useEffect(() => {
     if (!preview.records || preview.records.length === 0) return;
+    if (dupCacheRef[importType] !== undefined) {
+      setDuplicateIndices(dupCacheRef[importType]);
+      setForceImportIndices(new Set());
+      return;
+    }
     let cancelled = false;
     setCheckingDuplicates(true);
     setForceImportIndices(new Set());
     api.checkDuplicates(importType, preview.records)
-      .then((res) => { if (!cancelled) setDuplicateIndices(new Set(res.duplicates || [])); })
-      .catch(() => { if (!cancelled) setDuplicateIndices(new Set()); })
+      .then((res) => {
+        const result = new Set(res.duplicates || []);
+        dupCacheRef[importType] = result;
+        if (!cancelled) setDuplicateIndices(result);
+      })
+      .catch(() => {
+        dupCacheRef[importType] = new Set();
+        if (!cancelled) setDuplicateIndices(new Set());
+      })
       .finally(() => { if (!cancelled) setCheckingDuplicates(false); });
     return () => { cancelled = true; };
-  }, [importType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [importType, preview]); // re-run when type changes or a fresh preview is loaded
 
   const toggleForce = (idx) => {
     setForceImportIndices((prev) => {
