@@ -45,7 +45,8 @@ For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
 For "insurance" records use:
-{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "terms": string|null, "covered_conditions": ["<condition1>", "<condition2>"] }
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "terms": string|null, "covered_conditions": ["<condition1>", "<condition2>"], "insured_name": string|null }
+- "insured_name": The name of the person(s) insured / policy holder as stated in the document (e.g. "John Smith"). Use null if not found.
 - "terms": A comprehensive summary of the policy's key terms extracted verbatim or closely paraphrased from the document. Include: what is covered, coverage limits, deductibles, co-pays/co-insurance, exclusions, waiting periods, claim procedures, and any other material conditions. This is the most important field for enabling later coverage questions — be thorough. Use null only when the document contains no coverage detail at all.
 - "covered_conditions": A JSON array of specific covered conditions, procedures, events, or items explicitly listed in the document (e.g. ["hospitalization", "surgery", "accidental death", "critical illness", "maternity", "dental cleaning"]). Use [] when none can be identified.
 
@@ -170,7 +171,8 @@ ACCOUNT / RECORD TYPE VALIDATION (check every type field):
 
 INSURANCE DETAIL VALIDATION (applies only when import_type is "insurance"):
 - "terms": Verify the terms field contains a thorough summary of coverage. If the raw text has coverage details, exclusions, deductibles, co-pays, waiting periods, or claim procedures that are missing from terms, expand the field. This is critical — a sparse or missing terms field will make coverage queries useless.
-- "covered_conditions": Verify the array contains all specific conditions, procedures, or events explicitly listed as covered in the raw text. Add any that were missed (e.g. hospitalization, surgery, maternity, accidental death, critical illness, dental cleaning, vision exam). Must be a JSON array of strings, not a plain string.`;
+- "covered_conditions": Verify the array contains all specific conditions, procedures, or events explicitly listed as covered in the raw text. Add any that were missed (e.g. hospitalization, surgery, maternity, accidental death, critical illness, dental cleaning, vision exam). Must be a JSON array of strings, not a plain string.
+- "insured_name": If null or missing, look for the name of the insured person / policy holder in the raw text (e.g. labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", "Member Name") and populate it.`;
 
 /**
  * Pass 2: validate and refine an initial extraction against the source text.
@@ -253,6 +255,7 @@ CATEGORY 3 – WRONG TYPE CLASSIFICATION
 - For liabilities "type": mortgage/auto/student/personal/credit_card/heloc/other – verify against the raw text.
 - For insurance "type": verify the policy type against the raw text.
 - For insurance records: if "terms" is null or very short (< 50 characters) but the raw text contains coverage details, expand "terms" with all coverage information, exclusions, deductibles, and claim procedures found. If "covered_conditions" is empty but the raw text lists covered items, populate it as a JSON array.
+- For insurance records: if "insured_name" is null but the raw text contains the name of the insured person or policy holder (labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", or "Member Name"), populate it.
 
 Return the corrected result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON:
 {
@@ -668,6 +671,9 @@ function parseInsuranceDocument(text) {
   const renewalMatch = text.match(
     /(?:renewal\s+date|renews\s+on)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i
   );
+  const insuredNameMatch = text.match(
+    /(?:insured(?:\s+name)?|policy\s+holder|named\s+insured|life\s+assured|member\s+name)[ \t:]{1,20}([A-Za-z][A-Za-z '\-\.]{1,60})/i
+  );
 
   const lowerText = text.toLowerCase();
   let type = 'other';
@@ -756,6 +762,7 @@ function parseInsuranceDocument(text) {
     notes: null,
     terms,
     covered_conditions: coveredConditions,
+    insured_name: insuredNameMatch ? insuredNameMatch[1].trim() : null,
   };
 
   return { import_type: 'insurance', records: [record] };

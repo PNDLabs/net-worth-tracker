@@ -31,7 +31,8 @@ For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
 For "insurance" records use:
-{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null }
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "insured_name": string|null }
+- "insured_name": The name of the person(s) insured / policy holder as stated in the document (e.g. "John Smith"). Use null if not found.
 
 For "sip" records (SIP / mutual fund transaction statements) use:
 { "name": string, "symbol": string|null, "amount": number, "units": number|null, "nav": number|null, "installment_date": "YYYY-MM-DD" }
@@ -353,6 +354,9 @@ function parseInsuranceDocument(text) {
   const startMatch = text.match(/(?:effective\s+date|start\s+date|policy\s+start)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
   const endMatch = text.match(/(?:expiry\s+date|expiration\s+date|end\s+date|policy\s+end)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
   const renewalMatch = text.match(/(?:renewal\s+date|renews\s+on)[ \t:]{1,20}(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+  const insuredNameMatch = text.match(
+    /(?:insured(?:\s+name)?|policy\s+holder|named\s+insured|life\s+assured|member\s+name)[ \t:]{1,20}([A-Za-z][A-Za-z '\-\.]{1,60})/i
+  );
   const lowerText = text.toLowerCase();
   let type = 'other';
   if (/\bterm\s+life\b/.test(lowerText)) type = 'term_life';
@@ -378,6 +382,7 @@ function parseInsuranceDocument(text) {
     end_date: normalizeDate(endMatch ? endMatch[1] : null),
     renewal_date: normalizeDate(renewalMatch ? renewalMatch[1] : null),
     notes: null,
+    insured_name: insuredNameMatch ? insuredNameMatch[1].trim() : null,
   };
   return { import_type: 'insurance', records: [record] };
 }
