@@ -280,7 +280,7 @@ export default function MetalsPage() {
           </div>
 
           <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)', padding: '0 4px' }}>
-            ℹ️ Spot prices are in USD/gram from api.metals.live. Values are calculated as: qty × purity × price/g.
+            ℹ️ Spot prices from api.metals.live (converted to {currency}). Values are calculated as: qty × purity × price/g.
           </div>
         </div>
       )}
@@ -359,7 +359,7 @@ export default function MetalsPage() {
                 />
               </div>
               <div className="form-group">
-                <label>Current Price / gram (USD)</label>
+                <label>Current Price / gram{currency ? ` (${currency})` : ''}</label>
                 <input
                   type="number"
                   min="0"

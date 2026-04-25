@@ -1295,5 +1295,58 @@ describe('Precious Metals API', () => {
     const metal = await request(app).get(`/api/metals/${created.body.id}`);
     expect(metal.body.current_value).toBeGreaterThan(0);
     expect(metal.body.last_price_update).not.toBeNull();
+
+    // No defaultCurrency in fresh DB → defaults to USD, no forex call needed
+    expect(res.body.currency).toBe('USD');
+    expect(res.body.unit).toBe('USD_per_gram');
+  });
+
+  test('POST /api/metals/refresh-prices - converts to user defaultCurrency (INR) via forex', async () => {
+    // Set user currency to INR in settings
+    await request(app).patch('/api/settings').send({ defaultCurrency: 'INR' });
+
+    const created = await request(app).post('/api/metals').send({
+      name: 'INR Gold',
+      metal_type: 'gold',
+      purity: '24k',
+      quantity_grams: 10,
+    });
+
+    const originalFetch = global.fetch;
+    // First call → metals spot API; second call → forex API
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ gold: 3110.35, silver: 30, platinum: 900, palladium: 1000 }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ rates: { INR: 84 } }),
+      });
+
+    const res = await request(app).post('/api/metals/refresh-prices');
+    global.fetch = originalFetch;
+
+    expect(res.status).toBe(200);
+    expect(res.body.currency).toBe('INR');
+    expect(res.body.unit).toBe('INR_per_gram');
+
+    // gold: 3110.35 USD/troy-oz / 31.1035 g/oz * 84 INR/USD = 8400 INR/g
+    // value: 10g × 1.0 (24k) × 8400 = 84000
+    expect(res.body.prices.gold).toBeCloseTo(8400, 0);
+    const metal = await request(app).get(`/api/metals/${created.body.id}`);
+    expect(metal.body.current_value).toBeCloseTo(84000, 0);
+  });
+
+  test('GET /api/metals/spot-prices - returns currency from user settings', async () => {
+    // Reset settings to USD for this test's fresh DB
+    const res = await request(app).get('/api/metals/spot-prices');
+    // No defaultCurrency in fresh DB → should succeed or fail with 502 (no real network in test)
+    // Just ensure it doesn't 500 (internal server error)
+    expect([200, 502]).toContain(res.status);
+    if (res.status === 200) {
+      expect(res.body.currency).toBeDefined();
+      expect(res.body.unit).toMatch(/_per_gram$/);
+    }
   });
 });

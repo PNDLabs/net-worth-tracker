@@ -2,8 +2,10 @@
  * metals.js – REST routes for precious metals holdings.
  *
  * Supports gold, silver, platinum, and palladium in physical or digital form.
- * Live spot prices are fetched from api.metals.live (free, no key required)
- * and converted from USD/troy-oz to USD/gram.  Value is calculated as:
+ * Live spot prices are fetched from api.metals.live (free, no key required),
+ * converted from USD/troy-oz to the user's defaultCurrency/gram using
+ * open.er-api.com for FX rates (free, no key required).
+ * Value is calculated as:
  *
  *   current_value = quantity_grams × parsePurity(purity) × current_price_gram
  *
@@ -27,9 +29,69 @@ const VALID_METAL_FORMS = ['physical', 'digital'];
 // 1 troy ounce = 31.1035 grams
 const GRAMS_PER_TROY_OZ = 31.1035;
 
-// Metals.live free spot-price endpoint (no API key required)
+// Metals.live free spot-price endpoint (no API key required) – prices in USD
 const SPOT_PRICE_URL = 'https://api.metals.live/v1/spot';
 
+// Open Exchange Rates free endpoint – no API key required for latest USD rates
+const FOREX_URL = 'https://open.er-api.com/v6/latest/USD';
+
+/**
+ * Fetch the USD → targetCurrency exchange rate from open.er-api.com.
+ * Returns 1.0 immediately when targetCurrency is 'USD' or falsy.
+ */
+async function fetchExchangeRate(targetCurrency) {
+  if (!targetCurrency || targetCurrency === 'USD') return 1.0;
+  const resp = await fetch(FOREX_URL, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!resp.ok) throw new Error(`Exchange rate API returned ${resp.status}`);
+  const data = await resp.json();
+  const rate = data?.rates?.[targetCurrency];
+  if (!rate) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
+  return Number(rate);
+}
+
+/**
+ * Read the user's defaultCurrency from the settings table.
+ * Falls back to 'USD' when not set.
+ */
+function readDefaultCurrency(conn) {
+  const row = conn.prepare("SELECT value FROM settings WHERE key = 'defaultCurrency'").get();
+  if (!row) return 'USD';
+  try { return JSON.parse(row.value) || 'USD'; } catch { return row.value || 'USD'; }
+}
+
+/**
+ * Fetch live spot prices from api.metals.live, convert from USD/troy-oz to
+ * targetCurrency/gram using the live FX rate from open.er-api.com.
+ *
+ * Returns { gold, silver, platinum, palladium } in targetCurrency per gram.
+ */
+async function fetchSpotPricesPerGram(targetCurrency = 'USD') {
+  const resp = await fetch(SPOT_PRICE_URL, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
+  const data = await resp.json();
+
+  // The API returns an array with one object: [{ gold, silver, platinum, palladium }]
+  const prices = Array.isArray(data) ? data[0] : data;
+  if (!prices || typeof prices !== 'object') {
+    throw new Error('Unexpected response format from spot price API');
+  }
+
+  // Convert USD/troy-oz → USD/gram, then USD/gram → targetCurrency/gram
+  const fxRate = await fetchExchangeRate(targetCurrency);
+  const result = {};
+  for (const metal of VALID_METAL_TYPES) {
+    if (prices[metal] != null) {
+      result[metal] = (Number(prices[metal]) / GRAMS_PER_TROY_OZ) * fxRate;
+    }
+  }
+  return result;
+}
 /**
  * Parse a purity string and return a fraction (0–1).
  * Supported formats:
@@ -56,40 +118,15 @@ function parsePurity(purity) {
   return 1.0;
 }
 
-/**
- * Fetch live spot prices from api.metals.live.
- * Returns an object { gold, silver, platinum, palladium } in USD per gram,
- * or throws an Error on failure.
- */
-async function fetchSpotPricesPerGram() {
-  const resp = await fetch(SPOT_PRICE_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
-  const data = await resp.json();
-
-  // The API returns an array with one object: [{ gold, silver, platinum, palladium }]
-  const prices = Array.isArray(data) ? data[0] : data;
-  if (!prices || typeof prices !== 'object') {
-    throw new Error('Unexpected response format from spot price API');
-  }
-
-  const result = {};
-  for (const metal of VALID_METAL_TYPES) {
-    if (prices[metal] != null) {
-      result[metal] = Number(prices[metal]) / GRAMS_PER_TROY_OZ;
-    }
-  }
-  return result;
-}
-
 // ── GET /api/metals/spot-prices ──────────────────────────────────────────────
 
 router.get('/spot-prices', async (req, res) => {
+  const conn = db.getDb();
+  const defaultCurrency = readDefaultCurrency(conn);
+  const currency = (req.query.currency || defaultCurrency).toUpperCase();
   try {
-    const prices = await fetchSpotPricesPerGram();
-    res.json({ prices, unit: 'USD_per_gram', source: SPOT_PRICE_URL });
+    const prices = await fetchSpotPricesPerGram(currency);
+    res.json({ prices, currency, unit: `${currency}_per_gram`, source: SPOT_PRICE_URL });
   } catch (err) {
     res.status(502).json({ error: `Could not fetch spot prices: ${err.message}` });
   }
@@ -99,9 +136,10 @@ router.get('/spot-prices', async (req, res) => {
 
 router.post('/refresh-prices', async (req, res) => {
   const conn = db.getDb();
+  const currency = readDefaultCurrency(conn);
   let prices;
   try {
-    prices = await fetchSpotPricesPerGram();
+    prices = await fetchSpotPricesPerGram(currency);
   } catch (err) {
     return res.status(502).json({ error: `Could not fetch spot prices: ${err.message}` });
   }
@@ -134,7 +172,7 @@ router.post('/refresh-prices', async (req, res) => {
     }
   })();
 
-  res.json({ updated, prices, unit: 'USD_per_gram' });
+  res.json({ updated, prices, currency, unit: `${currency}_per_gram` });
 });
 
 // ── GET /api/metals ──────────────────────────────────────────────────────────
