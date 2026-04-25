@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.1] – 2026-04-25
+
+### Changed
+- Precious metals spot prices are now converted from USD to the user's **default currency** using live FX rates from [open.er-api.com](https://open.er-api.com) (free, no API key required). `current_value`, `current_price_gram`, and all price-refresh responses now reflect the user's selected currency instead of always using USD.
+- `GET /api/metals/spot-prices` and `POST /api/metals/refresh-prices` responses now include a `currency` field and a `{CURRENCY}_per_gram` unit string.
+- MetalsPage UI labels updated to display the active currency symbol.
+- Android `metalsService.js` applies the same FX conversion via `open.er-api.com`.
+
+---
+
 ## [1.7.0] – 2026-04-25
 
 ### Added
