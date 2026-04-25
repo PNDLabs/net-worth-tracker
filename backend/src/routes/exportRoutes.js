@@ -128,7 +128,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
     );
     const insertAccount = conn.prepare(
       `INSERT INTO accounts (name, institution, type, currency, balance, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, COALESCE(?, 'USD'), ?, ?, ?, ?)`
     );
     for (const row of (data.accounts || [])) {
       const existing = findAccount.get(String(row.name || ''), row.institution ? String(row.institution) : null);
@@ -139,7 +139,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
       }
       const result = insertAccount.run(
         String(row.name), row.institution ? String(row.institution) : null,
-        String(row.type || 'checking'), String(row.currency || 'USD'),
+        String(row.type || 'checking'), row.currency || null,
         Number(row.balance || 0), row.notes ? String(row.notes) : null,
         row.created_at || null, row.updated_at || null
       );

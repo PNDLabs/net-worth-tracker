@@ -157,7 +157,11 @@ export const api = {
   parseText: async (text, importType) => {
     const aiConfig = await getAiSettings();
     const options = aiConfig.apiKey ? aiConfig : {};
-    return parseStatement(text, options);
+    const { defaultCurrency } = await settingsSvc.getSettings().then((cfg) => {
+      const raw = cfg.defaultCurrency;
+      return { defaultCurrency: raw ? raw.replace(/^"|"$/g, '') : null };
+    }).catch(() => ({ defaultCurrency: null }));
+    return parseStatement(text, { ...options, defaultCurrency });
   },
 
   // Export / import full data

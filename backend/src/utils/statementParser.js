@@ -365,9 +365,9 @@ function normalizeDate(s) {
  * Detect the ISO 4217 currency code from document text.
  * Scans the first 5 000 characters (enough to cover document headers and the first
  * few pages of a statement) and scores currency indicators by frequency.
- * Returns 'USD' as the default when no clear indicator is found.
+ * Returns the provided defaultCurrency (or null) when no clear indicator is found.
  */
-function detectCurrency(text) {
+function detectCurrency(text, defaultCurrency = null) {
   // 5 000 chars covers the document header and first pages without reading the entire
   // document, balancing detection accuracy against performance.
   const sample = text.slice(0, 5000);
@@ -391,7 +391,7 @@ function detectCurrency(text) {
 
   const scores = { INR: inrScore, USD: usdScore, EUR: eurScore, GBP: gbpScore, JPY: jpyScore };
   const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
-  return best[1] > 0 ? best[0] : 'USD';
+  return best[1] > 0 ? best[0] : defaultCurrency;
 }
 
 /**
@@ -491,9 +491,9 @@ function extractAmounts(text) {
 /**
  * Parse a bank statement into account records.
  */
-function parseBankStatement(text) {
+function parseBankStatement(text, defaultCurrency = null) {
   const institution = extractInstitution(text);
-  const currency = detectCurrency(text);
+  const currency = detectCurrency(text, defaultCurrency);
   const records = [];
 
   // Look for labelled balance lines (supports both $ and ₹/Rs. prefixes)
@@ -812,8 +812,9 @@ function parseInsuranceDocument(text) {
  *   Closing Balance   110.234  490.00  ₹54,014.66
  *   Closing Balance   110.234 units @ ₹490.00 = ₹54,014.66
  */
-function parseCasStatement(text) {
+function parseCasStatement(text, defaultCurrency = null) {
   const records = [];
+  const casDefaultCurrency = detectCurrency(text, defaultCurrency);
   const lines = text.split(/\r?\n/);
 
   for (let i = 0; i < lines.length; i++) {
@@ -870,14 +871,14 @@ function parseCasStatement(text) {
       name: schemeName || `Mutual Fund Scheme ${records.length + 1}`,
       institution: amcName || 'Mutual Fund',
       type: 'brokerage',
-      currency: 'INR',
+      currency: casDefaultCurrency,
       balance: marketValue,
     });
   }
 
   // Fall back to generic bank-statement parsing if nothing was found
   if (records.length === 0) {
-    return parseBankStatement(text);
+    return parseBankStatement(text, defaultCurrency);
   }
 
   return { import_type: 'accounts', records };
@@ -895,11 +896,12 @@ function parseCasStatement(text) {
  *   Fallback – pattern-based parser                         [when AI unavailable or Pass 1 returned 0 records]
  *
  * @param {string} text     – full PDF text
- * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern }
+ * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern, defaultCurrency }
  * @returns {Promise<{ import_type, records, method, raw_preview, validation_notes }>}
  */
 async function parseStatement(text, options = {}) {
   const raw_preview = text.slice(0, 2000);
+  const { defaultCurrency = null } = options;
 
   // Try AI first (if key available and not explicitly bypassed)
   if (!options.forcePattern) {
@@ -976,14 +978,14 @@ async function parseStatement(text, options = {}) {
   const stmtType = detectStatementType(text);
   const result =
     stmtType === 'cas'
-      ? parseCasStatement(text)
+      ? parseCasStatement(text, defaultCurrency)
       : stmtType === 'sip'
         ? parseSipStatement(text)
         : stmtType === 'liabilities'
           ? parseLiabilityStatement(text)
           : stmtType === 'insurance'
             ? parseInsuranceDocument(text)
-            : parseBankStatement(text);
+            : parseBankStatement(text, defaultCurrency);
 
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }

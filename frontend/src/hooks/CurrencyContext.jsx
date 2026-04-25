@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from './apiAdapter';
 
-const CurrencyContext = createContext('USD');
+const CurrencyContext = createContext(null);
 
 /**
  * Map browser locale → ISO 4217 currency code.
@@ -42,7 +42,7 @@ function detectCurrencyFromLocale() {
 }
 
 export function CurrencyProvider({ children }) {
-  const [currency, setCurrencyState] = useState('USD');
+  const [currency, setCurrencyState] = useState(detectCurrencyFromLocale);
 
   useEffect(() => {
     api.getConfig()

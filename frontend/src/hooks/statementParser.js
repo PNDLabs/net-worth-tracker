@@ -22,7 +22,7 @@ Your task is to identify the financial records in the text and return structured
 }
 
 For "accounts" records use:
-{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "USD", "balance": number }
+{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "<ISO 4217 currency code detected from document, e.g. USD, EUR, INR, GBP, JPY>", "balance": number }
 
 For "assets" records use:
 { "name": string, "category": "<real_estate|vehicle|crypto|collectible|business|other>", "acquisition_date": "YYYY-MM-DD|null", "acquisition_cost": number|null, "current_value": number }
@@ -150,6 +150,33 @@ async function validateAndRefineWithAI(text, initialResult, options = {}) {
 
 // ─── Pattern-based Fallback ───────────────────────────────────────────────────
 
+/**
+ * Detect the ISO 4217 currency code from document text.
+ * Returns defaultCurrency when no clear indicator is found.
+ */
+function detectCurrency(text, defaultCurrency = null) {
+  const sample = text.slice(0, 5000);
+  const inrScore =
+    (sample.match(/₹/g) || []).length * 3 +
+    (sample.match(/\bRs\.?\b/g) || []).length * 2 +
+    (sample.match(/\bINR\b/g) || []).length * 2;
+  const usdScore =
+    (sample.match(/\$/g) || []).length * 3 +
+    (sample.match(/\bUSD\b/g) || []).length * 2;
+  const eurScore =
+    (sample.match(/€/g) || []).length * 3 +
+    (sample.match(/\bEUR\b/g) || []).length * 2;
+  const gbpScore =
+    (sample.match(/£/g) || []).length * 3 +
+    (sample.match(/\bGBP\b/g) || []).length * 2;
+  const jpyScore =
+    (sample.match(/¥/g) || []).length * 3 +
+    (sample.match(/\bJPY\b/g) || []).length * 2;
+  const scores = { INR: inrScore, USD: usdScore, EUR: eurScore, GBP: gbpScore, JPY: jpyScore };
+  const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
+  return best[1] > 0 ? best[0] : defaultCurrency;
+}
+
 function normalizeDate(s) {
   if (!s) return null;
   s = s.trim();
@@ -220,8 +247,9 @@ function extractAmounts(text) {
   return amounts.sort((a, b) => b - a);
 }
 
-function parseBankStatement(text) {
+function parseBankStatement(text, defaultCurrency = null) {
   const institution = extractInstitution(text);
+  const currency = detectCurrency(text, defaultCurrency);
   const records = [];
   const balancePatterns = [
     /(?:ending|closing|available|current|account)\s+balance[:\s]+(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
@@ -253,7 +281,7 @@ function parseBankStatement(text) {
         else if (/roth/.test(context)) type = 'roth_ira';
         else if (/ira/.test(context)) type = 'ira';
         else if (/brokerage|portfolio|invest/.test(context)) type = 'brokerage';
-        records.push({ name, institution, type, currency: 'USD', balance });
+        records.push({ name, institution, type, currency, balance });
       }
     }
   }
@@ -261,11 +289,11 @@ function parseBankStatement(text) {
     const totalLine = text.match(/(?:total|net)\s+(?:assets?|balance|worth)[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
     if (totalLine) {
       const balance = parseFloat(totalLine[1].replace(/,/g, ''));
-      records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance });
+      records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance });
     } else {
       const amounts = extractAmounts(text);
       if (amounts.length > 0) {
-        records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance: amounts[0] });
+        records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance: amounts[0] });
       }
     }
   }
@@ -387,8 +415,9 @@ function parseInsuranceDocument(text) {
   return { import_type: 'insurance', records: [record] };
 }
 
-function parseCasStatement(text) {
+function parseCasStatement(text, defaultCurrency = null) {
   const records = [];
+  const casDefaultCurrency = detectCurrency(text, defaultCurrency);
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -420,10 +449,10 @@ function parseCasStatement(text) {
     records.push({
       name: schemeName || `Mutual Fund Scheme ${records.length + 1}`,
       institution: amcName || 'Mutual Fund',
-      type: 'brokerage', currency: 'INR', balance: marketValue,
+      type: 'brokerage', currency: casDefaultCurrency, balance: marketValue,
     });
   }
-  if (records.length === 0) return parseBankStatement(text);
+  if (records.length === 0) return parseBankStatement(text, defaultCurrency);
   return { import_type: 'accounts', records };
 }
 
@@ -433,11 +462,12 @@ function parseCasStatement(text) {
  * Parse extracted text into structured financial records.
  *
  * @param {string} text     – raw text (from PDF or user paste)
- * @param {object} options  – { apiKey?, apiUrl?, model?, forcePattern? }
+ * @param {object} options  – { apiKey?, apiUrl?, model?, forcePattern?, defaultCurrency? }
  * @returns {Promise<{ import_type, records, method, raw_preview, validation_notes }>}
  */
 export async function parseStatement(text, options = {}) {
   const raw_preview = text.slice(0, 2000);
+  const { defaultCurrency = null } = options;
 
   if (!options.forcePattern) {
     try {
@@ -465,11 +495,11 @@ export async function parseStatement(text, options = {}) {
 
   const stmtType = detectStatementType(text);
   const result =
-    stmtType === 'cas' ? parseCasStatement(text)
+    stmtType === 'cas' ? parseCasStatement(text, defaultCurrency)
     : stmtType === 'sip' ? parseSipStatement(text)
     : stmtType === 'liabilities' ? parseLiabilityStatement(text)
     : stmtType === 'insurance' ? parseInsuranceDocument(text)
-    : parseBankStatement(text);
+    : parseBankStatement(text, defaultCurrency);
 
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }

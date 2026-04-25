@@ -2,6 +2,14 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
 
+function getDefaultCurrency(conn) {
+  try {
+    const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get('defaultCurrency');
+    if (row) return JSON.parse(row.value);
+  } catch (_) { /* ignore */ }
+  return null;
+}
+
 // GET /api/accounts
 router.get('/', (req, res) => {
   const accounts = db.getDb().prepare('SELECT * FROM accounts ORDER BY name').all();
@@ -17,7 +25,9 @@ router.get('/:id', (req, res) => {
 
 // POST /api/accounts
 router.post('/', (req, res) => {
-  const { name, institution, type = 'checking', currency = 'USD', balance = 0, notes } = req.body;
+  const conn = db.getDb();
+  const defaultCurrency = getDefaultCurrency(conn);
+  const { name, institution, type = 'checking', currency = defaultCurrency, balance = 0, notes } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   const VALID_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
@@ -25,7 +35,6 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: `type must be one of: ${VALID_TYPES.join(', ')}` });
   }
 
-  const conn = db.getDb();
   const duplicate = conn.prepare(
     `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
   ).get(name, institution || null);
@@ -33,8 +42,8 @@ router.post('/', (req, res) => {
 
   const result = conn.prepare(
     `INSERT INTO accounts (name, institution, type, currency, balance, notes)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(name, institution || null, type, currency, Number(balance), notes || null);
+     VALUES (?, ?, ?, COALESCE(?, 'USD'), ?, ?)`
+  ).run(name, institution || null, type, currency || null, Number(balance), notes || null);
 
   const account = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(result.lastInsertRowid);
   conn.prepare(

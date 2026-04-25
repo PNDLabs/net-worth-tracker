@@ -20,7 +20,7 @@ export default function AccountsPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: 'USD', balance: '', notes: '' }));
+  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: '', balance: '', notes: '' }));
   const [expandedId, setExpandedId] = useState(null);
   const [holdings, setHoldings] = useState({});
   const [showHoldingModal, setShowHoldingModal] = useState(false);
@@ -296,7 +296,7 @@ export default function AccountsPage() {
               </div>
               <div className="form-group">
                 <label>Currency</label>
-                <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} placeholder="USD" />
+                <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} placeholder={currency || 'e.g. USD, EUR, INR'} />
               </div>
             </div>
             <div className="form-row">

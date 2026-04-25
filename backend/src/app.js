@@ -55,7 +55,7 @@ function createApp() {
   // Server configuration (AI key availability, default currency, etc.)
   app.get('/api/config', apiLimiter, (req, res) => {
     const conn = db.getDb();
-    let defaultCurrency = 'USD';
+    let defaultCurrency = null;
     try {
       const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get('defaultCurrency');
       if (row) defaultCurrency = JSON.parse(row.value);

@@ -1,6 +1,12 @@
-export function formatCurrency(value, currency = 'USD') {
+export function formatCurrency(value, currency) {
   if (value == null) return '—';
-  return new Intl.NumberFormat('en-US', {
+  if (!currency) {
+    return new Intl.NumberFormat(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(value);
+  }
+  return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency,
     minimumFractionDigits: 0,

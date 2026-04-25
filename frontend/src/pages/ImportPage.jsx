@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../hooks/apiAdapter';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const IMPORT_TYPES = [
   { value: 'accounts', label: 'Accounts (bank / investment)', icon: '🏦' },
@@ -9,28 +10,16 @@ const IMPORT_TYPES = [
   { value: 'sip', label: 'SIP Installments (mutual funds)', icon: '💰' },
 ];
 
-const CSV_TEMPLATES = {
-  accounts: `name,institution,type,currency,balance
-Chase Checking,Chase Bank,checking,USD,5000
-Savings Account,Bank of America,savings,USD,12000
-401k,Fidelity,401k,USD,85000`,
-  assets: `name,category,acquisition_date,acquisition_cost,current_value
-Primary Home,real_estate,2020-06-15,350000,420000
-Tesla Model 3,vehicle,2022-01-10,42000,32000
-Bitcoin,crypto,,25000,30000`,
-  liabilities: `name,lender,type,original_principal,current_balance,interest_rate,minimum_payment
-Home Mortgage,Wells Fargo,mortgage,400000,375000,3.5,2100
-Car Loan,Toyota Finance,auto,28000,19500,4.9,450
-Credit Card,Chase,credit_card,,3200,19.99,96`,
-  insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes
-Life Insurance,Prudential,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,
-Health Plan,BlueCross,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,
-Auto Insurance,State Farm,auto,AU-456,120,monthly,100000,2024-06-01,2025-06-01,,`,
-  sip: `name,symbol,amount,units,nav,installment_date,notes
-NIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP
-Axis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,
-HDFC Mid-Cap Opportunities SIP,,5000,,,2025-01-15,`,
-};
+function getCsvTemplates(currency) {
+  const cur = currency || 'XXX';
+  return {
+    accounts: `name,institution,type,currency,balance\nMy Checking,My Bank,checking,${cur},5000\nMy Savings,My Bank,savings,${cur},12000\nRetirement,My Broker,401k,${cur},85000`,
+    assets: `name,category,acquisition_date,acquisition_cost,current_value\nPrimary Home,real_estate,2020-06-15,350000,420000\nCar,vehicle,2022-01-10,42000,32000\nBitcoin,crypto,,25000,30000`,
+    liabilities: `name,lender,type,original_principal,current_balance,interest_rate,minimum_payment\nHome Mortgage,My Bank,mortgage,400000,375000,3.5,2100\nCar Loan,Auto Finance,auto,28000,19500,4.9,450\nCredit Card,My Bank,credit_card,,3200,19.99,96`,
+    insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes\nLife Insurance,My Insurer,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,\nHealth Plan,My Insurer,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,`,
+    sip: `name,symbol,amount,units,nav,installment_date,notes\nNIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP\nAxis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,`,
+  };
+}
 
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
 function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
@@ -214,6 +203,8 @@ export default function ImportPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('pdf');
+  const { currency } = useCurrency();
+  const csvTemplates = getCsvTemplates(currency);
 
   useEffect(() => {
     api.getConfig().then((cfg) => setServerAiEnabled(!!cfg.aiEnabled)).catch(() => {});
@@ -357,7 +348,7 @@ export default function ImportPage() {
               </p>
               <div className="section-title" style={{ marginTop: 8 }}>Template</div>
               <pre style={{ fontSize: 11, background: 'var(--color-surface-2)', padding: 10, borderRadius: 6, overflow: 'auto', whiteSpace: 'pre-wrap', border: '1px solid var(--color-border)' }}>
-                {CSV_TEMPLATES[importType]}
+                {csvTemplates[importType]}
               </pre>
             </div>
           )}

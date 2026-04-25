@@ -12,8 +12,18 @@ import Papa from 'papaparse';
 import { query, run } from './dbService';
 import { parseStatement, mapCsvColumnsWithAI } from '../hooks/statementParser';
 import { extractPdfText } from '../hooks/pdfService';
+import { getSettings } from './settingsService';
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+async function readDefaultCurrency() {
+  try {
+    const cfg = await getSettings();
+    const raw = cfg.defaultCurrency;
+    if (raw) return typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
+  } catch (_) { /* ignore */ }
+  return null;
+}
 
 // ─── Duplicate detection (mirrors importRoutes.js) ───────────────────────────
 
@@ -63,13 +73,13 @@ export async function checkDuplicates(importType, records) {
 
 // ─── Single-row insert (mirrors CSV importRow logic) ─────────────────────────
 
-async function insertRow(importType, row) {
+async function insertRow(importType, row, defaultCurrency = null) {
   if (importType === 'accounts') {
-    const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
+    const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
     if (!name) throw new Error('name is required');
     await run(
-      `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, ?, ?)`,
-      [String(name), institution ? String(institution) : null, String(type), String(currency), Number(balance)]
+      `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`,
+      [String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance)]
     );
   } else if (importType === 'assets') {
     const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
@@ -130,13 +140,14 @@ async function insertRow(importType, row) {
  * Records with _forceImport: true bypass the duplicate check.
  */
 export async function importRecords(importType, records) {
+  const defaultCurrency = await readDefaultCurrency();
   const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
       const isDup = importType !== 'sip' && !row._forceImport && await isDuplicateRecord(importType, row);
       if (isDup) { results.skipped++; results.duplicates++; continue; }
-      await insertRow(importType, row);
+      await insertRow(importType, row, defaultCurrency);
       results.imported++;
     } catch (err) {
       results.skipped++;
@@ -234,10 +245,11 @@ export async function previewCsv(importType, file, aiOptions = {}) {
  * @param {object} [aiOptions] – { apiKey, apiUrl, model } passed to parseStatement
  */
 export async function previewPdf(file, password, aiOptions = {}) {
+  const defaultCurrency = await readDefaultCurrency();
   const buf = await file.arrayBuffer();
   const text = await extractPdfText(buf, password);
   if (!text.trim()) throw new Error('Could not extract text from PDF. The file may be scanned/image-only.');
-  return parseStatement(text, aiOptions);
+  return parseStatement(text, { ...aiOptions, defaultCurrency });
 }
 
 /**
@@ -245,6 +257,7 @@ export async function previewPdf(file, password, aiOptions = {}) {
  * @param {object} [aiOptions] – { apiKey, apiUrl, model } passed to parseStatement
  */
 export async function importPdf(file, password, importType, previewedRecords, aiOptions = {}) {
+  const defaultCurrency = await readDefaultCurrency();
   let parsed;
   if (previewedRecords) {
     if (!importType) throw new Error('importType is required when previewedRecords is provided');
@@ -253,7 +266,7 @@ export async function importPdf(file, password, importType, previewedRecords, ai
     const buf = await file.arrayBuffer();
     const text = await extractPdfText(buf, password);
     if (!text.trim()) throw new Error('Could not extract text from PDF.');
-    parsed = await parseStatement(text, aiOptions);
+    parsed = await parseStatement(text, { ...aiOptions, defaultCurrency });
   }
   const resolvedType = importType || parsed.import_type;
   const result = await importRecords(resolvedType, parsed.records);
@@ -264,6 +277,7 @@ export async function importPdf(file, password, importType, previewedRecords, ai
  * Parse raw text and return a preview (same shape as backend /api/import/text).
  */
 export async function parseText(text, importType) {
-  const result = await parseStatement(text, {});
+  const defaultCurrency = await readDefaultCurrency();
+  const result = await parseStatement(text, { defaultCurrency });
   return result;
 }

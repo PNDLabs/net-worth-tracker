@@ -19,7 +19,7 @@ export async function getAccount(id) {
   return rows[0];
 }
 
-export async function createAccount({ name, institution, type = 'checking', currency = 'USD', balance = 0, notes }) {
+export async function createAccount({ name, institution, type = 'checking', currency = null, balance = 0, notes }) {
   if (!name) throw new Error('name is required');
   const dup = await query(
     `SELECT id FROM accounts WHERE lower(name)=lower(?) AND lower(coalesce(institution,''))=lower(coalesce(?,''))`,
