@@ -22,7 +22,7 @@ Your task is to identify the financial records in the text and return structured
 }
 
 For "accounts" records use:
-{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "USD", "balance": number }
+{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "<ISO 4217 currency code detected from document, e.g. USD, EUR, INR, GBP, JPY. If not detectable from the document, omit this field or use null and the user's configured default will be applied.>", "balance": number }
 
 For "assets" records use:
 { "name": string, "category": "<real_estate|vehicle|crypto|collectible|business|other>", "acquisition_date": "YYYY-MM-DD|null", "acquisition_cost": number|null, "current_value": number }
@@ -150,6 +150,33 @@ async function validateAndRefineWithAI(text, initialResult, options = {}) {
 
 // ─── Pattern-based Fallback ───────────────────────────────────────────────────
 
+/**
+ * Detect the ISO 4217 currency code from document text.
+ * Returns defaultCurrency when no clear indicator is found.
+ */
+function detectCurrency(text, defaultCurrency = null) {
+  const sample = text.slice(0, 5000);
+  const inrScore =
+    (sample.match(/₹/g) || []).length * 3 +
+    (sample.match(/\bRs\.?\b/g) || []).length * 2 +
+    (sample.match(/\bINR\b/g) || []).length * 2;
+  const usdScore =
+    (sample.match(/\$/g) || []).length * 3 +
+    (sample.match(/\bUSD\b/g) || []).length * 2;
+  const eurScore =
+    (sample.match(/€/g) || []).length * 3 +
+    (sample.match(/\bEUR\b/g) || []).length * 2;
+  const gbpScore =
+    (sample.match(/£/g) || []).length * 3 +
+    (sample.match(/\bGBP\b/g) || []).length * 2;
+  const jpyScore =
+    (sample.match(/¥/g) || []).length * 3 +
+    (sample.match(/\bJPY\b/g) || []).length * 2;
+  const scores = { INR: inrScore, USD: usdScore, EUR: eurScore, GBP: gbpScore, JPY: jpyScore };
+  const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
+  return best[1] > 0 ? best[0] : defaultCurrency;
+}
+
 function normalizeDate(s) {
   if (!s) return null;
   s = s.trim();
@@ -220,8 +247,9 @@ function extractAmounts(text) {
   return amounts.sort((a, b) => b - a);
 }
 
-function parseBankStatement(text) {
+function parseBankStatement(text, defaultCurrency = null) {
   const institution = extractInstitution(text);
+  const currency = detectCurrency(text, defaultCurrency);
   const records = [];
   const balancePatterns = [
     /(?:ending|closing|available|current|account)\s+balance[:\s]+(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
@@ -253,7 +281,7 @@ function parseBankStatement(text) {
         else if (/roth/.test(context)) type = 'roth_ira';
         else if (/ira/.test(context)) type = 'ira';
         else if (/brokerage|portfolio|invest/.test(context)) type = 'brokerage';
-        records.push({ name, institution, type, currency: 'USD', balance });
+        records.push({ name, institution, type, currency, balance });
       }
     }
   }
@@ -261,11 +289,11 @@ function parseBankStatement(text) {
     const totalLine = text.match(/(?:total|net)\s+(?:assets?|balance|worth)[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
     if (totalLine) {
       const balance = parseFloat(totalLine[1].replace(/,/g, ''));
-      records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance });
+      records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance });
     } else {
       const amounts = extractAmounts(text);
       if (amounts.length > 0) {
-        records.push({ name: `${institution} Account`, institution, type: 'other', currency: 'USD', balance: amounts[0] });
+        records.push({ name: `${institution} Account`, institution, type: 'other', currency, balance: amounts[0] });
       }
     }
   }
@@ -387,8 +415,9 @@ function parseInsuranceDocument(text) {
   return { import_type: 'insurance', records: [record] };
 }
 
-function parseCasStatement(text) {
+function parseCasStatement(text, defaultCurrency = null) {
   const records = [];
+  const casDefaultCurrency = detectCurrency(text, defaultCurrency);
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -420,10 +449,10 @@ function parseCasStatement(text) {
     records.push({
       name: schemeName || `Mutual Fund Scheme ${records.length + 1}`,
       institution: amcName || 'Mutual Fund',
-      type: 'brokerage', currency: 'INR', balance: marketValue,
+      type: 'brokerage', currency: casDefaultCurrency, balance: marketValue,
     });
   }
-  if (records.length === 0) return parseBankStatement(text);
+  if (records.length === 0) return parseBankStatement(text, defaultCurrency);
   return { import_type: 'accounts', records };
 }
 
@@ -433,11 +462,12 @@ function parseCasStatement(text) {
  * Parse extracted text into structured financial records.
  *
  * @param {string} text     – raw text (from PDF or user paste)
- * @param {object} options  – { apiKey?, apiUrl?, model?, forcePattern? }
+ * @param {object} options  – { apiKey?, apiUrl?, model?, forcePattern?, defaultCurrency? }
  * @returns {Promise<{ import_type, records, method, raw_preview, validation_notes }>}
  */
 export async function parseStatement(text, options = {}) {
   const raw_preview = text.slice(0, 2000);
+  const { defaultCurrency = null } = options;
 
   if (!options.forcePattern) {
     try {
@@ -465,11 +495,89 @@ export async function parseStatement(text, options = {}) {
 
   const stmtType = detectStatementType(text);
   const result =
-    stmtType === 'cas' ? parseCasStatement(text)
+    stmtType === 'cas' ? parseCasStatement(text, defaultCurrency)
     : stmtType === 'sip' ? parseSipStatement(text)
     : stmtType === 'liabilities' ? parseLiabilityStatement(text)
     : stmtType === 'insurance' ? parseInsuranceDocument(text)
-    : parseBankStatement(text);
+    : parseBankStatement(text, defaultCurrency);
 
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
+}
+
+// ─── AI CSV Column Mapper ─────────────────────────────────────────────────────
+
+const CSV_COLUMN_MAPPER_PROMPT = `You are a financial CSV column mapper. Given CSV column headers and sample data, map each header to the correct target field for the specified import type.
+
+Target fields per import type:
+- accounts: name (required), institution, type (checking/savings/money_market/cd/brokerage/401k/ira/roth_ira/pension/other), currency, balance (required)
+- assets: name (required), category (real_estate/vehicle/crypto/collectible/business/other), acquisition_date (YYYY-MM-DD), acquisition_cost, current_value (required)
+- liabilities: name (required), lender, type (mortgage/auto/student/personal/credit_card/heloc/other), original_principal, current_balance (required), interest_rate, minimum_payment
+- insurance: name (required), provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes
+- sip: name (required), symbol, amount (required), units, nav, installment_date (YYYY-MM-DD), notes
+
+Return ONLY JSON (no markdown fences, no prose):
+{
+  "column_mapping": { "<csv_header>": "<target_field_or_null>", ... },
+  "mapping_notes": ["<short explanation of any non-obvious mapping>"]
+}
+
+Rules:
+- Map each CSV column to the single best matching target field for the given import_type, or null if no match.
+- Do NOT map two columns to the same target field; pick the best one for each target field.
+- For the required "name" field: if no column is literally named "name", map the most descriptive text column (e.g. "Company Name", "Stock Name", "Fund Name", "Scheme", "Scrip", "Security", "Description") to "name".
+- Semantic aliases: "Ticker"/"Symbol"/"Scrip"/"ISIN" → symbol; "Qty"/"Quantity"/"Units" → shares for assets or units for sip; "LTP"/"Last Price"/"CMP"/"Mkt Price"/"Current Price" → current_price or current_value; "Market Value"/"Mkt Value"/"Current Value"/"Present Value"/"Total Value"/"Portfolio Value" → current_value or balance; "Cost"/"Avg Cost"/"Avg Price"/"Purchase Price" → acquisition_cost; "P&L"/"Gain"/"Gain/Loss"/"Return" → null; "Purchase Date"/"Trade Date"/"Date" → acquisition_date or installment_date; "Lender"/"Bank"/"Creditor" → lender; "Rate"/"Interest Rate"/"APR" → interest_rate.`;
+
+/**
+ * Use AI to map arbitrary CSV column headers to the target schema fields.
+ * Front-end version — uses options.apiKey directly (from aiSettings.js on Android).
+ *
+ * @param {string[]} headers     – column names from the CSV header row
+ * @param {object[]} sampleRows  – first few data rows (raw objects with CSV header keys)
+ * @param {string}   importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {object}   options     – must include { apiKey }; optional: { apiUrl, model }
+ * @returns {Promise<{ column_mapping: object, mapping_notes: string[] }|null>}
+ */
+export async function mapCsvColumnsWithAI(headers, sampleRows, importType, options = {}) {
+  const { apiKey, apiUrl = 'https://api.openai.com/v1', model = 'gpt-4o-mini' } = options;
+  if (!apiKey) return null;
+
+  const userMessage =
+    `Import type: "${importType}"\n` +
+    `CSV headers: ${JSON.stringify(headers)}\n` +
+    `Sample rows (first ${sampleRows.length}):\n${JSON.stringify(sampleRows, null, 2)}`;
+
+  const response = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: CSV_COLUMN_MAPPER_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI CSV mapper error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI CSV mapper returned empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('AI CSV mapper returned invalid JSON response');
+  }
+  if (!parsed.column_mapping || typeof parsed.column_mapping !== 'object') {
+    throw new Error('AI CSV mapper response missing column_mapping');
+  }
+  if (!Array.isArray(parsed.mapping_notes)) parsed.mapping_notes = [];
+  return parsed;
 }

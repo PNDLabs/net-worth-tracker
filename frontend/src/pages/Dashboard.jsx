@@ -7,7 +7,8 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 
-const COLORS = ['#28a745', '#0366d6', '#f66a0a', '#6f42c1'];
+// Pie chart colors: Cash & Savings, Investments & Pensions, Investment Holdings, Other Assets, Liabilities
+const COLORS = ['#28a745', '#0366d6', '#6f42c1', '#f66a0a', '#dc3545'];
 
 export default function Dashboard() {
   const [summary, setSummary] = useState(null);
@@ -41,9 +42,9 @@ export default function Dashboard() {
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
 
   const pieData = summary ? [
-    { name: 'Cash & Accounts', value: summary.accountsTotal },
-    { name: 'Investments', value: summary.holdingsTotal },
-    { name: 'Mutual Funds / SIP', value: summary.sipTotal },
+    { name: 'Cash & Savings', value: summary.cashTotal },
+    { name: 'Investments & Pensions', value: summary.investmentAccountsTotal },
+    { name: 'Investment Holdings', value: summary.holdingsTotal },
     { name: 'Other Assets', value: summary.assetsTotal },
     { name: 'Liabilities', value: -summary.totalLiabilities },
   ].filter((d) => d.value > 0) : [];
@@ -96,9 +97,9 @@ export default function Dashboard() {
           <div className="section-title">Breakdown</div>
           <table>
             <tbody>
-              <tr><td>Cash &amp; Accounts</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.accountsTotal)}</td></tr>
+              <tr><td>Cash &amp; Savings</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.cashTotal)}</td></tr>
+              <tr><td>Investments &amp; Pensions</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.investmentAccountsTotal)}</td></tr>
               <tr><td>Investment Holdings</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.holdingsTotal)}</td></tr>
-              <tr><td>Mutual Funds / SIP</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.sipTotal)}</td></tr>
               <tr><td>Other Assets</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.assetsTotal)}</td></tr>
               <tr style={{ borderTop: '2px solid var(--color-border)' }}><td><strong>Total Assets</strong></td><td className="amount positive" style={{ textAlign: 'right' }}><strong>{fmt(summary?.totalAssets)}</strong></td></tr>
               <tr><td>Total Liabilities</td><td className="amount negative" style={{ textAlign: 'right' }}>−{fmt(summary?.totalLiabilities)}</td></tr>

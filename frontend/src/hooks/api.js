@@ -38,6 +38,7 @@ export const api = {
   createInsurance: (data) => apiFetch('/insurance', { method: 'POST', body: JSON.stringify(data) }),
   updateInsurance: (id, data) => apiFetch(`/insurance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteInsurance: (id) => apiFetch(`/insurance/${id}`, { method: 'DELETE' }),
+  createAssetFromInsurance: (id) => apiFetch(`/insurance/${id}/create-asset`, { method: 'POST' }),
   queryInsuranceCoverage: (question) => apiFetch('/insurance/query', { method: 'POST', body: JSON.stringify({ question }) }),
   analyzeInsuranceCoverage: () => apiFetch('/insurance/analysis'),
 
@@ -76,6 +77,20 @@ export const api = {
     const formData = new FormData();
     formData.append('file', file);
     const res = await fetch(`${API_BASE}/import/csv?import_type=${importType}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed: ${res.status}`);
+    }
+    return res.json();
+  },
+
+  previewCsv: async (importType, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/import/csv/preview?import_type=${importType}`, {
       method: 'POST',
       body: formData,
     });

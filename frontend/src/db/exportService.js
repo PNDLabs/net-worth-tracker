@@ -148,10 +148,10 @@ export async function importAllData(payload) {
     }
     const { lastId } = await run(
       `INSERT INTO accounts (name, institution, type, currency, balance, notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, COALESCE(?, 'USD'), ?, ?, ?, ?)`,
       [
         String(row.name), row.institution ? String(row.institution) : null,
-        String(row.type || 'checking'), String(row.currency || 'USD'),
+        String(row.type || 'checking'), row.currency || null,
         Number(row.balance || 0), row.notes ? String(row.notes) : null,
         row.created_at || null, row.updated_at || null,
       ]

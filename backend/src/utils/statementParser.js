@@ -84,9 +84,15 @@ ACCOUNT TYPE CLASSIFICATION (critical – classify precisely):
 - "401k" → 401(k) retirement plan
 - "ira" → IRA (traditional)
 - "roth_ira" → Roth IRA
-- "pension" → pension, provident fund (PF, EPF, PPF)
+- "pension" → pension, provident fund (PF, EPF, PPF, EPFO, NPS)
 - "money_market" → money market account or liquid fund
-- "other" → use only when no other type fits`;
+- "other" → use only when no other type fits
+
+EPFO / PROVIDENT FUND DOCUMENTS (critical – never classify as liabilities):
+- EPFO passbooks, UAN (Universal Account Number) statements, Employee Provident Fund (EPF) documents, and any Provident Fund (PF/PPF/GPF) statements are ALWAYS "accounts" records with type "pension".
+- These are Indian government-mandated retirement savings — they are assets/savings, never liabilities or loans.
+- Use institution="EPFO" (or the actual trust/employer name if shown), currency="INR", and set balance to the total corpus / closing balance shown.
+- If the document lists employer contributions, employee contributions, and interest separately, sum them into a single balance or return each as a separate account record.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
 
@@ -166,8 +172,12 @@ AMOUNT VALIDATION (check every monetary value):
 - Verify the numeric value against the raw text and correct any misreading.
 
 ACCOUNT / RECORD TYPE VALIDATION (check every type field):
-- For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF; "money_market" = liquid fund.
+- For accounts: "savings" = savings account; "checking" = current/checking account; "cd" = fixed deposit/FD/RD; "brokerage" = demat/trading/mutual fund; "pension" = PF/EPF/PPF/EPFO/NPS; "money_market" = liquid fund.
 - Correct the type field if the label in the raw text clearly indicates a different classification.
+
+EPFO / PROVIDENT FUND VALIDATION (critical – never classify as liabilities):
+- If the raw text contains keywords like "EPFO", "UAN", "Universal Account Number", "Employee Provident Fund", "EPF", "Provident Fund", "PF Passbook", or "PPF" and the extraction has import_type="liabilities", correct it to import_type="accounts" with type="pension" and add a validation note.
+- These are Indian retirement savings accounts and must never be returned as liabilities.
 
 INSURANCE DETAIL VALIDATION (applies only when import_type is "insurance"):
 - "terms": Verify the terms field contains a thorough summary of coverage. If the raw text has coverage details, exclusions, deductibles, co-pays, waiting periods, or claim procedures that are missing from terms, expand the field. This is critical — a sparse or missing terms field will make coverage queries useless.
@@ -250,10 +260,11 @@ CATEGORY 3 – WRONG TYPE CLASSIFICATION
   - Current Account → "checking"
   - Savings Account / SB Account → "savings"
   - Demat / Trading / Mutual Fund portfolio → "brokerage"
-  - EPF / PPF / Provident Fund / Pension → "pension"
+  - EPF / PPF / EPFO / Provident Fund / Pension / NPS → "pension"
   - Liquid Fund / Money Market → "money_market"
 - For liabilities "type": mortgage/auto/student/personal/credit_card/heloc/other – verify against the raw text.
 - For insurance "type": verify the policy type against the raw text.
+- EPFO / PROVIDENT FUND CORRECTION: If the raw text contains "EPFO", "UAN", "Universal Account Number", "Employee Provident Fund", "EPF Passbook", "PF Passbook", or "Provident Fund" and import_type is "liabilities", correct import_type to "accounts", set type="pension", and add an accuracy note. These are retirement savings, never liabilities.
 - For insurance records: if "terms" is null or very short (< 50 characters) but the raw text contains coverage details, expand "terms" with all coverage information, exclusions, deductibles, and claim procedures found. If "covered_conditions" is empty but the raw text lists covered items, populate it as a JSON array.
 - For insurance records: if "insured_name" is null but the raw text contains the name of the insured person or policy holder (labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", or "Member Name"), populate it.
 
@@ -354,9 +365,9 @@ function normalizeDate(s) {
  * Detect the ISO 4217 currency code from document text.
  * Scans the first 5 000 characters (enough to cover document headers and the first
  * few pages of a statement) and scores currency indicators by frequency.
- * Returns 'USD' as the default when no clear indicator is found.
+ * Returns the provided defaultCurrency (or null) when no clear indicator is found.
  */
-function detectCurrency(text) {
+function detectCurrency(text, defaultCurrency = null) {
   // 5 000 chars covers the document header and first pages without reading the entire
   // document, balancing detection accuracy against performance.
   const sample = text.slice(0, 5000);
@@ -380,7 +391,7 @@ function detectCurrency(text) {
 
   const scores = { INR: inrScore, USD: usdScore, EUR: eurScore, GBP: gbpScore, JPY: jpyScore };
   const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a));
-  return best[1] > 0 ? best[0] : 'USD';
+  return best[1] > 0 ? best[0] : defaultCurrency;
 }
 
 /**
@@ -395,6 +406,20 @@ function detectStatementType(text) {
     /\bconsolidated\s+account\s+statement\b/.test(lower) ||
     (/\bfolio\b/.test(lower) && /\bclosing\s+balance\b/.test(lower))
   ) return 'cas';
+
+  // EPFO / Provident Fund passbook → always accounts (pension), must be checked BEFORE
+  // the liability heuristic to prevent misclassification
+  const EPFO_KEYWORDS = [
+    'epfo',
+    'uan',
+    'universal account number',
+    'employee provident fund',
+    'epf passbook',
+    'pf passbook',
+    'provident fund passbook',
+  ];
+  if (EPFO_KEYWORDS.some((kw) => lower.includes(kw)) ||
+      /\bemployees['']?\s+provident\b/.test(lower)) return 'accounts';
 
   // Strong signals for SIP / mutual fund transaction statements
   if (
@@ -466,9 +491,9 @@ function extractAmounts(text) {
 /**
  * Parse a bank statement into account records.
  */
-function parseBankStatement(text) {
+function parseBankStatement(text, defaultCurrency = null) {
   const institution = extractInstitution(text);
-  const currency = detectCurrency(text);
+  const currency = detectCurrency(text, defaultCurrency);
   const records = [];
 
   // Look for labelled balance lines (supports both $ and ₹/Rs. prefixes)
@@ -478,6 +503,10 @@ function parseBankStatement(text) {
     /balance\s+as\s+of[^$₹\n]*(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
     // Fixed Deposit / FD balances (common in Indian bank statements)
     /(?:fixed\s+deposit|fd)\s+(?:balance|amount|principal)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    // EPFO / PF total corpus / net balance (common in EPFO passbooks)
+    /net\s+balance[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /total\s+pf\s+(?:balance|corpus|amount)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
+    /total\s+(?:balance|corpus|amount)[:\s]+(?:\$|₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/gi,
   ];
 
   const foundBalances = new Set();
@@ -511,7 +540,7 @@ function parseBankStatement(text) {
         else if (/401\s*k/.test(context)) type = '401k';
         else if (/roth/.test(context)) type = 'roth_ira';
         else if (/\bira\b/.test(context)) type = 'ira';
-        else if (/\bepf\b|\bppf\b|\bprovident\b|\bpension\b/.test(context)) type = 'pension';
+        else if (/\bepfo\b|\bepf\b|\bppf\b|\buan\b|\bprovident\b|\bpension\b/.test(context)) type = 'pension';
         else if (/brokerage|portfolio|invest|demat/.test(context)) type = 'brokerage';
 
         records.push({ name, institution, type, currency, balance });
@@ -783,8 +812,9 @@ function parseInsuranceDocument(text) {
  *   Closing Balance   110.234  490.00  ₹54,014.66
  *   Closing Balance   110.234 units @ ₹490.00 = ₹54,014.66
  */
-function parseCasStatement(text) {
+function parseCasStatement(text, defaultCurrency = null) {
   const records = [];
+  const casDefaultCurrency = detectCurrency(text, defaultCurrency);
   const lines = text.split(/\r?\n/);
 
   for (let i = 0; i < lines.length; i++) {
@@ -841,14 +871,14 @@ function parseCasStatement(text) {
       name: schemeName || `Mutual Fund Scheme ${records.length + 1}`,
       institution: amcName || 'Mutual Fund',
       type: 'brokerage',
-      currency: 'INR',
+      currency: casDefaultCurrency,
       balance: marketValue,
     });
   }
 
   // Fall back to generic bank-statement parsing if nothing was found
   if (records.length === 0) {
-    return parseBankStatement(text);
+    return parseBankStatement(text, defaultCurrency);
   }
 
   return { import_type: 'accounts', records };
@@ -866,11 +896,12 @@ function parseCasStatement(text) {
  *   Fallback – pattern-based parser                         [when AI unavailable or Pass 1 returned 0 records]
  *
  * @param {string} text     – full PDF text
- * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern }
+ * @param {object} options  – optional: { apiKey, apiUrl, model, forcePattern, defaultCurrency }
  * @returns {Promise<{ import_type, records, method, raw_preview, validation_notes }>}
  */
 async function parseStatement(text, options = {}) {
   const raw_preview = text.slice(0, 2000);
+  const { defaultCurrency = null } = options;
 
   // Try AI first (if key available and not explicitly bypassed)
   if (!options.forcePattern) {
@@ -947,16 +978,100 @@ async function parseStatement(text, options = {}) {
   const stmtType = detectStatementType(text);
   const result =
     stmtType === 'cas'
-      ? parseCasStatement(text)
+      ? parseCasStatement(text, defaultCurrency)
       : stmtType === 'sip'
         ? parseSipStatement(text)
         : stmtType === 'liabilities'
           ? parseLiabilityStatement(text)
           : stmtType === 'insurance'
             ? parseInsuranceDocument(text)
-            : parseBankStatement(text);
+            : parseBankStatement(text, defaultCurrency);
 
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }
 
-module.exports = { parseStatement, detectStatementType, parseCasStatement };
+// ─── AI CSV Column Mapper ─────────────────────────────────────────────────────
+
+const CSV_COLUMN_MAPPER_PROMPT = `You are a financial CSV column mapper. Given CSV column headers and sample data, map each header to the correct target field for the specified import type.
+
+Target fields per import type:
+- accounts: name (required), institution, type (checking/savings/money_market/cd/brokerage/401k/ira/roth_ira/pension/other), currency, balance (required)
+- assets: name (required), category (real_estate/vehicle/crypto/collectible/business/other), acquisition_date (YYYY-MM-DD), acquisition_cost, current_value (required)
+- liabilities: name (required), lender, type (mortgage/auto/student/personal/credit_card/heloc/other), original_principal, current_balance (required), interest_rate, minimum_payment
+- insurance: name (required), provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes
+- sip: name (required), symbol, amount (required), units, nav, installment_date (YYYY-MM-DD), notes
+
+Return ONLY JSON (no markdown fences, no prose):
+{
+  "column_mapping": { "<csv_header>": "<target_field_or_null>", ... },
+  "mapping_notes": ["<short explanation of any non-obvious mapping>"]
+}
+
+Rules:
+- Map each CSV column to the single best matching target field for the given import_type, or null if no match.
+- Do NOT map two columns to the same target field; pick the best one for each target field.
+- For the required "name" field: if no column is literally named "name", map the most descriptive text column (e.g. "Company Name", "Stock Name", "Fund Name", "Scheme", "Scrip", "Security", "Description") to "name".
+- Semantic aliases: "Ticker"/"Symbol"/"Scrip"/"ISIN" → symbol; "Qty"/"Quantity"/"Units" → shares for assets or units for sip; "LTP"/"Last Price"/"CMP"/"Mkt Price"/"Current Price" → current_price or current_value; "Market Value"/"Mkt Value"/"Current Value"/"Present Value"/"Total Value"/"Portfolio Value" → current_value or balance; "Cost"/"Avg Cost"/"Avg Price"/"Purchase Price" → acquisition_cost; "P&L"/"Gain"/"Gain/Loss"/"Return" → null; "Purchase Date"/"Trade Date"/"Date" → acquisition_date or installment_date; "Lender"/"Bank"/"Creditor" → lender; "Rate"/"Interest Rate"/"APR" → interest_rate.
+- Convert amounts: remove currency symbols and commas from values before treating as numbers.`;
+
+/**
+ * Use AI to map arbitrary CSV column headers to the target schema fields.
+ *
+ * @param {string[]} headers     – column names from the CSV header row
+ * @param {object[]} sampleRows  – first few data rows (raw objects with CSV header keys)
+ * @param {string}   importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {object}   options     – optional: { apiKey, apiUrl, model }
+ * @returns {Promise<{ column_mapping: object, mapping_notes: string[] }|null>}
+ */
+async function mapCsvColumnsWithAI(headers, sampleRows, importType, options = {}) {
+  const apiKey = options.apiKey || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const apiUrl = options.apiUrl || process.env.AI_API_URL || 'https://api.openai.com/v1';
+  const model = options.model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+  const userMessage =
+    `Import type: "${importType}"\n` +
+    `CSV headers: ${JSON.stringify(headers)}\n` +
+    `Sample rows (first ${sampleRows.length}):\n${JSON.stringify(sampleRows, null, 2)}`;
+
+  const response = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: CSV_COLUMN_MAPPER_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI CSV mapper error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI CSV mapper returned empty response');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('AI CSV mapper returned invalid JSON response');
+  }
+  if (!parsed.column_mapping || typeof parsed.column_mapping !== 'object') {
+    throw new Error('AI CSV mapper response missing column_mapping');
+  }
+  if (!Array.isArray(parsed.mapping_notes)) parsed.mapping_notes = [];
+  return parsed;
+}
+
+module.exports = { parseStatement, detectStatementType, parseCasStatement, mapCsvColumnsWithAI };

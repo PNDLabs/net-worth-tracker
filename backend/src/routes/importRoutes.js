@@ -4,9 +4,17 @@ const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const db = require('../db/database');
 const { extractPdfText } = require('../utils/pdfExtractor');
-const { parseStatement } = require('../utils/statementParser');
+const { parseStatement, mapCsvColumnsWithAI } = require('../utils/statementParser');
 
 class DuplicateError extends Error {}
+
+function getDefaultCurrency(conn) {
+  try {
+    const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get('defaultCurrency');
+    if (row) return JSON.parse(row.value);
+  } catch (_) { /* ignore */ }
+  return null;
+}
 
 /**
  * Returns true when a row with the same natural key already exists in the DB.
@@ -85,6 +93,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
   }
 
   const conn = db.getDb();
+  const defaultCurrency = getDefaultCurrency(conn);
   const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
 
   const normalizeKeys = (obj) => {
@@ -103,12 +112,12 @@ router.post('/csv', upload.single('file'), (req, res) => {
     if (isDuplicate(row)) throw new DuplicateError('Duplicate entry skipped');
 
     if (importType === 'accounts') {
-      const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
+      const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
       if (!name) throw new Error('name is required');
       conn.prepare(
         `INSERT INTO accounts (name, institution, type, currency, balance)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(String(name), institution ? String(institution) : null, String(type), String(currency), Number(balance));
+         VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`
+      ).run(String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance));
 
     } else if (importType === 'assets') {
       const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
@@ -199,9 +208,82 @@ router.post('/csv', upload.single('file'), (req, res) => {
 });
 
 /**
- * POST /api/import/json
- * Body: { import_type: 'accounts'|'assets'|'liabilities', records: [...] }
+ * POST /api/import/csv/preview
+ * Upload a CSV file, use AI to intelligently map column headers to target schema fields,
+ * and return a preview of the mapped records WITHOUT writing to the database.
+ *
+ * Query params: ?import_type=accounts|assets|liabilities|insurance|sip  (default: accounts)
+ *
+ * When AI is unavailable, falls back to basic lowercase+underscore key normalization.
  */
+router.post('/csv/preview', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const importType = req.query.import_type || 'accounts';
+  if (!VALID_IMPORT_TYPES.includes(importType)) {
+    return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
+  }
+
+  let records;
+  try {
+    records = parse(req.file.buffer, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      cast: true,
+    });
+  } catch (err) {
+    return res.status(422).json({ error: `CSV parse error: ${err.message}` });
+  }
+
+  if (records.length === 0) {
+    return res.status(422).json({ error: 'CSV file is empty or has no data rows' });
+  }
+
+  const headers = Object.keys(records[0]);
+  const sampleRows = records.slice(0, 3);
+
+  let mappedRecords;
+  let method;
+  let validationNotes = [];
+
+  try {
+    const aiResult = await mapCsvColumnsWithAI(headers, sampleRows, importType);
+    if (aiResult && aiResult.column_mapping) {
+      // Apply the AI column mapping to every row
+      mappedRecords = records.map((row) => {
+        const mapped = {};
+        for (const [csvCol, targetField] of Object.entries(aiResult.column_mapping)) {
+          if (targetField && row[csvCol] !== undefined && row[csvCol] !== null && row[csvCol] !== '') {
+            mapped[targetField] = row[csvCol];
+          }
+        }
+        return mapped;
+      });
+      method = 'ai';
+      validationNotes = aiResult.mapping_notes || [];
+    } else {
+      throw new Error('AI unavailable');
+    }
+  } catch (aiErr) {
+    // AI mapping failed or unavailable — fall back to basic key normalization (same as /csv route)
+    if (aiErr.message !== 'AI unavailable') {
+      console.error('CSV AI column mapping failed, falling back to key normalization:', aiErr.message);
+    }
+    mappedRecords = records.map((row) => {
+      const out = {};
+      for (const [k, v] of Object.entries(row)) {
+        out[k.toLowerCase().replace(/\s+/g, '_')] = v;
+      }
+      return out;
+    });
+    method = 'pattern';
+  }
+
+  res.json({ import_type: importType, records: mappedRecords, method, validation_notes: validationNotes });
+});
+
+
 router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   const { import_type: importType = 'accounts', records } = req.body || {};
 
@@ -214,6 +296,7 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   }
 
   const conn = db.getDb();
+  const defaultCurrency = getDefaultCurrency(conn);
   const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
 
   const isDuplicateJson = (row) => isDuplicateRecord(conn, importType, row);
@@ -224,11 +307,11 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
       if (!row._forceImport && isDuplicateJson(row)) { results.skipped++; results.duplicates++; continue; }
 
       if (importType === 'accounts') {
-        const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
+        const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
         if (!name) throw new Error('name is required');
         conn.prepare(
-          `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, ?, ?)`
-        ).run(String(name), institution ? String(institution) : null, String(type), String(currency), Number(balance));
+          `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`
+        ).run(String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance));
 
       } else if (importType === 'assets') {
         const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
@@ -369,7 +452,8 @@ router.post('/pdf/preview', upload.single('file'), async (req, res) => {
       return res.status(422).json({ error: 'Could not extract text from PDF. The file may be scanned/image-only.' });
     }
 
-    const result = await parseStatement(text, {});
+    const conn = db.getDb();
+    const result = await parseStatement(text, { defaultCurrency: getDefaultCurrency(conn) });
     res.json(result);
   } catch (err) {
     if (err.code === 'PASSWORD_REQUIRED') {
@@ -421,7 +505,8 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
       if (!text.trim()) {
         return res.status(422).json({ error: 'Could not extract text from PDF.' });
       }
-      parsed = await parseStatement(text, {});
+      const conn2 = db.getDb();
+      parsed = await parseStatement(text, { defaultCurrency: getDefaultCurrency(conn2) });
     }
 
     // Allow caller to override the detected import type
@@ -431,6 +516,7 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     }
 
     const conn = db.getDb();
+    const defaultCurrency = getDefaultCurrency(conn);
     const results = { imported: 0, skipped: 0, duplicates: 0, errors: [], method: parsed.method };
 
     const isDuplicatePdf = (row) => isDuplicateRecord(conn, importType, row);
@@ -441,11 +527,11 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
         if (!row._forceImport && isDuplicatePdf(row)) { results.skipped++; results.duplicates++; continue; }
 
         if (importType === 'accounts') {
-          const { name, institution, type = 'other', currency = 'USD', balance = 0 } = row;
+          const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
           if (!name) throw new Error('name is required');
           conn.prepare(
-            `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, ?, ?)`
-          ).run(String(name), institution ? String(institution) : null, String(type), String(currency), Number(balance));
+            `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`
+          ).run(String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance));
         } else if (importType === 'assets') {
           const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
           if (!name) throw new Error('name is required');

@@ -239,16 +239,17 @@ describe('Net Worth API', () => {
     expect(res.body.netWorth).toBe(25000);
   });
 
-  test('GET /api/networth - includes SIP installments in totalAssets', async () => {
+  test('GET /api/networth - SIP installments are NOT included in totalAssets (tracked separately in SIP page)', async () => {
     await request(app).post('/api/accounts').send({ name: 'Bank', type: 'checking', balance: 10000 });
     await request(app).post('/api/sip').send({ name: 'NIFTY SIP Jan', symbol: 'NIFTYBEES', amount: 5000 });
     await request(app).post('/api/sip').send({ name: 'NIFTY SIP Feb', symbol: 'NIFTYBEES', amount: 3000 });
 
     const res = await request(app).get('/api/networth');
     expect(res.status).toBe(200);
-    expect(res.body.sipTotal).toBe(8000);
-    expect(res.body.totalAssets).toBe(18000);
-    expect(res.body.netWorth).toBe(18000);
+    // sipTotal is no longer part of net worth to avoid double-counting with account balances
+    expect(res.body.sipTotal).toBeUndefined();
+    expect(res.body.totalAssets).toBe(10000);
+    expect(res.body.netWorth).toBe(10000);
   });
 
   test('POST /api/networth/snapshots - creates a snapshot', async () => {
@@ -441,6 +442,55 @@ describe('Insurance Plans API', () => {
 
   test('DELETE /api/insurance/:id - 404 for unknown id', async () => {
     const res = await request(app).delete('/api/insurance/9999');
+    expect(res.status).toBe(404);
+  });
+
+  test('POST /api/insurance/:id/create-asset - creates vehicle asset from auto IDV', async () => {
+    const ins = await request(app).post('/api/insurance').send({
+      name: 'Car Insurance', type: 'auto', coverage_amount: 500000, insured_name: 'Honda City 2022',
+    });
+    expect(ins.status).toBe(201);
+
+    const res = await request(app).post(`/api/insurance/${ins.body.id}/create-asset`);
+    expect(res.status).toBe(201);
+    expect(res.body.asset.name).toBe('Honda City 2022');
+    expect(res.body.asset.category).toBe('vehicle');
+    expect(res.body.asset.current_value).toBe(500000);
+    expect(res.body.plan.linked_asset_id).toBe(res.body.asset.id);
+  });
+
+  test('POST /api/insurance/:id/create-asset - falls back to plan name when insured_name absent', async () => {
+    const ins = await request(app).post('/api/insurance').send({
+      name: 'My Bike Insurance', type: 'auto', coverage_amount: 80000,
+    });
+    const res = await request(app).post(`/api/insurance/${ins.body.id}/create-asset`);
+    expect(res.status).toBe(201);
+    expect(res.body.asset.name).toBe('My Bike Insurance');
+  });
+
+  test('POST /api/insurance/:id/create-asset - 400 for non-auto type', async () => {
+    const ins = await request(app).post('/api/insurance').send({ name: 'Health', type: 'health', coverage_amount: 200000 });
+    const res = await request(app).post(`/api/insurance/${ins.body.id}/create-asset`);
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/insurance/:id/create-asset - 400 when coverage_amount missing', async () => {
+    const ins = await request(app).post('/api/insurance').send({ name: 'Auto No IDV', type: 'auto' });
+    const res = await request(app).post(`/api/insurance/${ins.body.id}/create-asset`);
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/insurance/:id/create-asset - 409 when asset already exists', async () => {
+    await request(app).post('/api/assets').send({ name: 'Maruti Swift', category: 'vehicle', current_value: 400000 });
+    const ins = await request(app).post('/api/insurance').send({
+      name: 'Swift Insurance', type: 'auto', coverage_amount: 350000, insured_name: 'Maruti Swift',
+    });
+    const res = await request(app).post(`/api/insurance/${ins.body.id}/create-asset`);
+    expect(res.status).toBe(409);
+  });
+
+  test('POST /api/insurance/:id/create-asset - 404 for unknown insurance id', async () => {
+    const res = await request(app).post('/api/insurance/9999/create-asset');
     expect(res.status).toBe(404);
   });
 });

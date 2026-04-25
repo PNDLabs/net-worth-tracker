@@ -2,20 +2,30 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
 
+// Account types that are purely cash/deposit (no investment component).
+// Investment account types: money_market, brokerage, 401k, ira, roth_ira, pension, other
+const CASH_ACCOUNT_TYPES = ['checking', 'savings', 'cd'];
+
 function calcNetWorth(conn) {
-  const accountsTotal = conn.prepare('SELECT COALESCE(SUM(balance), 0) as total FROM accounts').get().total;
+  const cashPlaceholders = CASH_ACCOUNT_TYPES.map(() => '?').join(',');
+  const cashTotal = conn.prepare(
+    `SELECT COALESCE(SUM(balance), 0) as total FROM accounts WHERE type IN (${cashPlaceholders})`
+  ).get(...CASH_ACCOUNT_TYPES).total;
+  const investmentAccountsTotal = conn.prepare(
+    `SELECT COALESCE(SUM(balance), 0) as total FROM accounts WHERE type NOT IN (${cashPlaceholders})`
+  ).get(...CASH_ACCOUNT_TYPES).total;
+  // Keep accountsTotal for snapshot compatibility
+  const accountsTotal = cashTotal + investmentAccountsTotal;
   const holdingsTotal = conn.prepare(
     `SELECT COALESCE(SUM(COALESCE(current_value, shares * COALESCE(current_price, 0))), 0) as total FROM holdings`
   ).get().total;
   const assetsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM assets').get().total;
   const liabilitiesTotal = conn.prepare('SELECT COALESCE(SUM(ABS(current_balance)), 0) as total FROM liabilities').get().total;
-  const sipTotal = conn.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM sip_installments').get().total;
-
-  const totalAssets = accountsTotal + holdingsTotal + assetsTotal + sipTotal;
+  const totalAssets = accountsTotal + holdingsTotal + assetsTotal;
   const totalLiabilities = liabilitiesTotal;
   const netWorth = totalAssets - totalLiabilities;
 
-  return { accountsTotal, holdingsTotal, assetsTotal, sipTotal, totalAssets, totalLiabilities, netWorth };
+  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, totalAssets, totalLiabilities, netWorth };
 }
 
 // GET /api/networth

@@ -178,11 +178,11 @@ export default function AssetsPage() {
                 <input type="date" value={form.acquisition_date} onChange={(e) => setForm({ ...form, acquisition_date: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Cost Basis ($)</label>
+                <label>Cost Basis{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={form.acquisition_cost} onChange={(e) => setForm({ ...form, acquisition_cost: e.target.value })} placeholder="300000" />
               </div>
               <div className="form-group">
-                <label>Current Value ($) *</label>
+                <label>Current Value{currency ? ` (${currency})` : ''} *</label>
                 <input type="number" value={form.current_value} onChange={(e) => setForm({ ...form, current_value: e.target.value })} placeholder="350000" />
               </div>
             </div>

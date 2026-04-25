@@ -142,6 +142,7 @@ function runMigrations(db) {
   addColumnIfMissing('insurance_plans', 'terms', 'TEXT');
   addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
   addColumnIfMissing('insurance_plans', 'insured_name', 'TEXT');
+  addColumnIfMissing('insurance_plans', 'linked_asset_id', 'INTEGER REFERENCES assets(id) ON DELETE SET NULL');
 }
 
 let _db;

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../hooks/apiAdapter';
+import { useCurrency } from '../hooks/CurrencyContext';
 
 const IMPORT_TYPES = [
   { value: 'accounts', label: 'Accounts (bank / investment)', icon: '🏦' },
@@ -9,28 +10,16 @@ const IMPORT_TYPES = [
   { value: 'sip', label: 'SIP Installments (mutual funds)', icon: '💰' },
 ];
 
-const CSV_TEMPLATES = {
-  accounts: `name,institution,type,currency,balance
-Chase Checking,Chase Bank,checking,USD,5000
-Savings Account,Bank of America,savings,USD,12000
-401k,Fidelity,401k,USD,85000`,
-  assets: `name,category,acquisition_date,acquisition_cost,current_value
-Primary Home,real_estate,2020-06-15,350000,420000
-Tesla Model 3,vehicle,2022-01-10,42000,32000
-Bitcoin,crypto,,25000,30000`,
-  liabilities: `name,lender,type,original_principal,current_balance,interest_rate,minimum_payment
-Home Mortgage,Wells Fargo,mortgage,400000,375000,3.5,2100
-Car Loan,Toyota Finance,auto,28000,19500,4.9,450
-Credit Card,Chase,credit_card,,3200,19.99,96`,
-  insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes
-Life Insurance,Prudential,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,
-Health Plan,BlueCross,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,
-Auto Insurance,State Farm,auto,AU-456,120,monthly,100000,2024-06-01,2025-06-01,,`,
-  sip: `name,symbol,amount,units,nav,installment_date,notes
-NIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP
-Axis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,
-HDFC Mid-Cap Opportunities SIP,,5000,,,2025-01-15,`,
-};
+function getCsvTemplates(currency) {
+  const cur = currency || 'CURRENCY_CODE';
+  return {
+    accounts: `name,institution,type,currency,balance\nMy Checking,My Bank,checking,${cur},5000\nMy Savings,My Bank,savings,${cur},12000\nRetirement,My Broker,401k,${cur},85000`,
+    assets: `name,category,acquisition_date,acquisition_cost,current_value\nPrimary Home,real_estate,2020-06-15,350000,420000\nCar,vehicle,2022-01-10,42000,32000\nBitcoin,crypto,,25000,30000`,
+    liabilities: `name,lender,type,original_principal,current_balance,interest_rate,minimum_payment\nHome Mortgage,My Bank,mortgage,400000,375000,3.5,2100\nCar Loan,Auto Finance,auto,28000,19500,4.9,450\nCredit Card,My Bank,credit_card,,3200,19.99,96`,
+    insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes\nLife Insurance,My Insurer,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,\nHealth Plan,My Insurer,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,`,
+    sip: `name,symbol,amount,units,nav,installment_date,notes\nNIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP\nAxis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,`,
+  };
+}
 
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
 function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
@@ -200,7 +189,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
 }
 
 // ─── Main ImportPage ──────────────────────────────────────────────────────────
-export default function ImportPage({ onRefresh }) {
+export default function ImportPage() {
   const [importType, setImportType] = useState('accounts');
   const [csvFile, setCsvFile] = useState(null);
   const [jsonText, setJsonText] = useState('');
@@ -209,10 +198,13 @@ export default function ImportPage({ onRefresh }) {
   const [pdfPassword, setPdfPassword] = useState('');
   const [serverAiEnabled, setServerAiEnabled] = useState(false);
   const [pdfPreview, setPdfPreview] = useState(null);
+  const [csvPreview, setCsvPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('pdf');
+  const { currency } = useCurrency();
+  const csvTemplates = getCsvTemplates(currency);
 
   useEffect(() => {
     api.getConfig().then((cfg) => setServerAiEnabled(!!cfg.aiEnabled)).catch(() => {});
@@ -221,10 +213,29 @@ export default function ImportPage({ onRefresh }) {
   async function importCsv() {
     if (!csvFile) return setError('Please select a CSV file.');
     try {
-      setLoading(true); setError(''); setResult(null);
-      const res = await api.importCsv(importType, csvFile);
+      setLoading(true); setError(''); setResult(null); setCsvPreview(null);
+      const preview = await api.previewCsv(importType, csvFile);
+      if (!preview.records || preview.records.length === 0) {
+        setError(
+          preview.method === 'pattern'
+            ? 'No records could be extracted. Column names did not match the expected format and AI mapping is not enabled. ' +
+              'Enable AI by setting AI_API_KEY in the server .env, or use the CSV template for standard column names.'
+            : 'No records could be extracted from the CSV file.'
+        );
+        return;
+      }
+      setCsvPreview(preview);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function confirmCsvImport(overrideType, finalRecords) {
+    try {
+      setLoading(true); setError('');
+      const res = await api.importJson(overrideType, finalRecords);
       setResult(res);
-      if (onRefresh) onRefresh();
+      setCsvPreview(null);
+      setCsvFile(null);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -239,7 +250,6 @@ export default function ImportPage({ onRefresh }) {
       setLoading(true); setError(''); setResult(null);
       const res = await api.importJson(importType, records);
       setResult(res);
-      if (onRefresh) onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -270,12 +280,17 @@ export default function ImportPage({ onRefresh }) {
   async function confirmPdfImport(overrideType, finalRecords) {
     try {
       setLoading(true); setError('');
-      const res = await api.importPdf(pdfFile, pdfPassword, overrideType, finalRecords || pdfPreview?.records);
+      const records = finalRecords || pdfPreview?.records;
+      let res;
+      if (pdfPreview?.isText) {
+        res = await api.importJson(overrideType, records);
+      } else {
+        res = await api.importPdf(pdfFile, pdfPassword, overrideType, records);
+      }
       setResult(res);
       setPdfPreview(null);
       setPdfFile(null);
       setPdfPassword('');
-      if (onRefresh) onRefresh();
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -326,12 +341,14 @@ export default function ImportPage({ onRefresh }) {
 
           {tab === 'csv' && (
             <div className="card mt-4">
-              <div className="section-title">CSV Template</div>
+              <div className="section-title">CSV Tips</div>
               <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-                Copy the template below to create your CSV file.
+                With AI enabled, <strong>any column names are accepted</strong> — the AI maps them automatically.<br />
+                Without AI, column names must match the template exactly.
               </p>
+              <div className="section-title" style={{ marginTop: 8 }}>Template</div>
               <pre style={{ fontSize: 11, background: 'var(--color-surface-2)', padding: 10, borderRadius: 6, overflow: 'auto', whiteSpace: 'pre-wrap', border: '1px solid var(--color-border)' }}>
-                {CSV_TEMPLATES[importType]}
+                {csvTemplates[importType]}
               </pre>
             </div>
           )}
@@ -369,7 +386,7 @@ export default function ImportPage({ onRefresh }) {
               {['pdf', 'text', 'csv', 'json'].map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setTab(t); setError(''); setResult(null); setPdfPreview(null); }}
+                  onClick={() => { setTab(t); setError(''); setResult(null); setPdfPreview(null); setCsvPreview(null); }}
                   style={{
                     borderRadius: 0, borderBottom: tab === t ? '2px solid var(--color-primary)' : '2px solid transparent',
                     background: 'none', padding: '8px 20px',
@@ -460,12 +477,17 @@ export default function ImportPage({ onRefresh }) {
 
             {tab === 'csv' && (
               <>
+                <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: serverAiEnabled ? '#e8f5e9' : '#fff3e0', color: serverAiEnabled ? '#2e7d32' : '#e65100', border: `1px solid ${serverAiEnabled ? '#a5d6a7' : '#ffcc80'}`, marginBottom: 12 }}>
+                  {serverAiEnabled
+                    ? '✅ AI column mapping enabled — any column names will be automatically understood.'
+                    : '💡 Set AI_API_KEY in .env to enable smart column mapping for non-standard CSV formats.'}
+                </div>
                 <div className="form-group mb-4">
                   <label>Select CSV File</label>
-                  <input type="file" accept=".csv,text/csv" onChange={(e) => setCsvFile(e.target.files[0])} />
+                  <input type="file" accept=".csv,text/csv" onChange={(e) => { setCsvFile(e.target.files[0]); setCsvPreview(null); setResult(null); setError(''); }} />
                 </div>
-                <button className="btn-primary" onClick={importCsv} disabled={loading}>
-                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</> : '📥 Import CSV'}
+                <button className="btn-primary" onClick={importCsv} disabled={loading || !csvFile}>
+                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Parsing…</> : '🔍 Parse & Preview'}
                 </button>
               </>
             )}
@@ -496,6 +518,16 @@ export default function ImportPage({ onRefresh }) {
               loading={loading}
               onConfirm={confirmPdfImport}
               onCancel={() => setPdfPreview(null)}
+            />
+          )}
+
+          {/* CSV Preview */}
+          {csvPreview && (
+            <PdfPreviewPanel
+              preview={csvPreview}
+              loading={loading}
+              onConfirm={confirmCsvImport}
+              onCancel={() => setCsvPreview(null)}
             />
           )}
         </div>

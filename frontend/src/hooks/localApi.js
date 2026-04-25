@@ -48,6 +48,7 @@ export const api = {
   createInsurance: (data) => insSvc.createInsurance(data),
   updateInsurance: (id, data) => insSvc.updateInsurance(id, data),
   deleteInsurance: (id) => insSvc.deleteInsurance(id),
+  createAssetFromInsurance: (id) => insSvc.createAssetFromInsurance(id),
 
   queryInsuranceCoverage: async (question) => {
     if (!question || !question.trim()) throw new Error('question is required');
@@ -133,6 +134,12 @@ export const api = {
 
   importCsv: (importType, file) => importSvc.importCsv(importType, file),
 
+  previewCsv: async (importType, file) => {
+    const aiConfig = await getAiSettings();
+    const options = aiConfig.apiKey ? aiConfig : {};
+    return importSvc.previewCsv(importType, file, options);
+  },
+
   checkDuplicates: (importType, records) => importSvc.checkDuplicates(importType, records),
 
   previewPdf: async (file, password) => {
@@ -150,7 +157,11 @@ export const api = {
   parseText: async (text, importType) => {
     const aiConfig = await getAiSettings();
     const options = aiConfig.apiKey ? aiConfig : {};
-    return parseStatement(text, options);
+    const { defaultCurrency } = await settingsSvc.getSettings().then((cfg) => {
+      const raw = cfg.defaultCurrency;
+      return { defaultCurrency: raw ? raw.replace(/^"|"$/g, '') : null };
+    }).catch(() => ({ defaultCurrency: null }));
+    return parseStatement(text, { ...options, defaultCurrency });
   },
 
   // Export / import full data

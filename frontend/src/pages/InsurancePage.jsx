@@ -180,6 +180,17 @@ export default function InsurancePage() {
     catch (e) { setError(e.message); }
   }
 
+  async function createVehicleAsset(plan) {
+    const assetName = plan.insured_name || plan.name;
+    if (!confirm(`Create a vehicle asset "${assetName}" with current value ${fmt(plan.coverage_amount)} (IDV)?\n\nThis asset will be linked to this insurance policy and will count towards your net worth.`)) return;
+    try {
+      await api.createAssetFromInsurance(plan.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
   async function runQuery() {
     if (!queryText.trim()) return setQueryError('Please describe your situation.');
     try {
@@ -318,6 +329,19 @@ export default function InsurancePage() {
                       </td>
                       <td>
                         <div className="flex-gap">
+                          {p.type === 'auto' && p.coverage_amount != null && !p.linked_asset_id && (
+                            <button
+                              className="btn-ghost btn-sm"
+                              title="Create a vehicle asset using this policy's IDV"
+                              onClick={() => createVehicleAsset(p)}
+                            >🚗 Create Asset</button>
+                          )}
+                          {p.linked_asset_id && (
+                            <span
+                              title="A vehicle asset has been created from this policy's IDV"
+                              style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600, padding: '2px 6px', border: '1px solid var(--color-success)', borderRadius: 8 }}
+                            >🔗 Asset Linked</span>
+                          )}
                           <button className="btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
                           <button className="btn-danger btn-sm" onClick={() => remove(p.id)}>Delete</button>
                         </div>
@@ -368,7 +392,7 @@ export default function InsurancePage() {
 
             <div className="form-row">
               <div className="form-group">
-                <label>Premium Amount ($)</label>
+                <label>Premium Amount{currency ? ` (${currency})` : ''}</label>
                 <input type="number" step="0.01" value={form.premium_amount} onChange={(e) => setForm({ ...form, premium_amount: e.target.value })} placeholder="150" />
               </div>
               <div className="form-group">
@@ -378,7 +402,7 @@ export default function InsurancePage() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Coverage Amount ($)</label>
+                <label>Coverage Amount{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={form.coverage_amount} onChange={(e) => setForm({ ...form, coverage_amount: e.target.value })} placeholder="500000" />
               </div>
             </div>

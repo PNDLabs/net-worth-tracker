@@ -20,7 +20,7 @@ export default function AccountsPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: 'USD', balance: '', notes: '' }));
+  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: '', balance: '', notes: '' }));
   const [expandedId, setExpandedId] = useState(null);
   const [holdings, setHoldings] = useState({});
   const [showHoldingModal, setShowHoldingModal] = useState(false);
@@ -28,8 +28,39 @@ export default function AccountsPage() {
   const [holdingAccountId, setHoldingAccountId] = useState(null);
   const [historyId, setHistoryId] = useState(null);
   const [historyData, setHistoryData] = useState({});
+  const [filterText, setFilterText] = useState('');
+  const [filterType, setFilterType] = useState('');
+  const [sortKey, setSortKey] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
   const { currency } = useCurrency();
   const fmt = (v) => formatCurrency(v, currency);
+
+  function toggleSort(key) {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  }
+
+  function SortIcon({ col }) {
+    if (sortKey !== col) return <span style={{ opacity: 0.3, marginLeft: 4 }}>↕</span>;
+    return <span style={{ marginLeft: 4 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  }
+
+  const visibleAccounts = accounts
+    .filter((a) => {
+      const q = filterText.toLowerCase();
+      const matchText = !q || a.name.toLowerCase().includes(q) || (a.institution || '').toLowerCase().includes(q);
+      const matchType = !filterType || a.type === filterType;
+      return matchText && matchType;
+    })
+    .sort((a, b) => {
+      let av = a[sortKey] ?? '';
+      let bv = b[sortKey] ?? '';
+      if (sortKey === 'balance') { av = Number(av); bv = Number(bv); }
+      else { av = String(av).toLowerCase(); bv = String(bv).toLowerCase(); }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
 
   const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', notes: '' });
 
@@ -106,16 +137,44 @@ export default function AccountsPage() {
         </div>
       ) : (
         <div className="card">
+          <div className="flex-gap" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+            <input
+              placeholder="Search name or institution…"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              style={{ flex: '1 1 180px', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: 14 }}
+            />
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: 14 }}
+            >
+              <option value="">All types</option>
+              {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+            </select>
+            {(filterText || filterType) && (
+              <button className="btn-ghost btn-sm" onClick={() => { setFilterText(''); setFilterType(''); }}>✕ Clear</button>
+            )}
+            <span style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--color-text-muted)' }}>
+              {visibleAccounts.length} of {accounts.length}
+            </span>
+          </div>
           <div className="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th>Institution</th><th>Type</th><th>Currency</th>
-                  <th style={{ textAlign: 'right' }}>Balance</th><th>Actions</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>Name<SortIcon col="name" /></th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('institution')}>Institution<SortIcon col="institution" /></th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('type')}>Type<SortIcon col="type" /></th>
+                  <th>Currency</th>
+                  <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('balance')}>Balance<SortIcon col="balance" /></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((acc) => (
+                {visibleAccounts.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 24 }}>No accounts match the current filters.</td></tr>
+                ) : visibleAccounts.map((acc) => (
                   <>
                     <tr key={acc.id}>
                       <td>
@@ -237,12 +296,12 @@ export default function AccountsPage() {
               </div>
               <div className="form-group">
                 <label>Currency</label>
-                <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} placeholder="USD" />
+                <input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} placeholder={currency || 'e.g. USD, EUR, INR'} />
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Current Balance ($)</label>
+                <label>Current Balance{form.currency ? ` (${form.currency})` : ''}</label>
                 <input type="number" value={form.balance} onChange={(e) => setForm({ ...form, balance: e.target.value })} placeholder="0" />
               </div>
             </div>
@@ -279,11 +338,11 @@ export default function AccountsPage() {
                 <input type="number" value={holdingForm.shares} onChange={(e) => setHoldingForm({ ...holdingForm, shares: e.target.value })} placeholder="10" />
               </div>
               <div className="form-group">
-                <label>Current Price ($)</label>
+                <label>Current Price{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={holdingForm.current_price} onChange={(e) => setHoldingForm({ ...holdingForm, current_price: e.target.value })} placeholder="180.00" />
               </div>
               <div className="form-group">
-                <label>Current Value ($)</label>
+                <label>Current Value{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={holdingForm.current_value} onChange={(e) => setHoldingForm({ ...holdingForm, current_value: e.target.value })} placeholder="1800" />
               </div>
             </div>
