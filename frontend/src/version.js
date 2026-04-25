@@ -12,7 +12,7 @@
  *   • DB schema changes also require incrementing DB_SCHEMA_VERSION in backend/src/db/database.js.
  */
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.7.0';
 
 /**
  * The export/import JSON schema version.
@@ -20,4 +20,4 @@ export const APP_VERSION = '1.6.0';
  * backwards-incompatible way.  Exports produced by older schema versions
  * whose number is ≤ CURRENT_SCHEMA_VERSION are always accepted.
  */
-export const EXPORT_SCHEMA_VERSION = 2;
+export const EXPORT_SCHEMA_VERSION = 3;

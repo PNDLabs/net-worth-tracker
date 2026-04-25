@@ -27,6 +27,14 @@ export const api = {
   updateAsset: (id, data) => apiFetch(`/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAsset: (id) => apiFetch(`/assets/${id}`, { method: 'DELETE' }),
 
+  // Precious Metals
+  getMetals: () => apiFetch('/metals'),
+  createMetal: (data) => apiFetch('/metals', { method: 'POST', body: JSON.stringify(data) }),
+  updateMetal: (id, data) => apiFetch(`/metals/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMetal: (id) => apiFetch(`/metals/${id}`, { method: 'DELETE' }),
+  getMetalSpotPrices: () => apiFetch('/metals/spot-prices'),
+  refreshMetalPrices: () => apiFetch('/metals/refresh-prices', { method: 'POST' }),
+
   // Liabilities
   getLiabilities: () => apiFetch('/liabilities'),
   createLiability: (data) => apiFetch('/liabilities', { method: 'POST', body: JSON.stringify(data) }),

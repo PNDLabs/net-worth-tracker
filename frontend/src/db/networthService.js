@@ -22,6 +22,7 @@ async function calcNetWorth() {
   );
   const [hold]  = await query('SELECT COALESCE(SUM(COALESCE(current_value, shares * COALESCE(current_price, 0))),0) as total FROM holdings');
   const [assets] = await query('SELECT COALESCE(SUM(current_value),0) as total FROM assets');
+  const [metals] = await query('SELECT COALESCE(SUM(current_value),0) as total FROM precious_metals');
   const [liabs]  = await query('SELECT COALESCE(SUM(ABS(current_balance)),0) as total FROM liabilities');
 
   const cashTotal               = cash?.total   ?? 0;
@@ -29,11 +30,12 @@ async function calcNetWorth() {
   const accountsTotal           = cashTotal + investmentAccountsTotal;
   const holdingsTotal           = hold?.total  ?? 0;
   const assetsTotal             = assets?.total ?? 0;
+  const metalsTotal             = metals?.total ?? 0;
   const totalLiabilities = liabs?.total ?? 0;
-  const totalAssets     = accountsTotal + holdingsTotal + assetsTotal;
+  const totalAssets     = accountsTotal + holdingsTotal + assetsTotal + metalsTotal;
   const netWorth        = totalAssets - totalLiabilities;
 
-  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, totalAssets, totalLiabilities, netWorth };
+  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, metalsTotal, totalAssets, totalLiabilities, netWorth };
 }
 
 export { calcNetWorth };

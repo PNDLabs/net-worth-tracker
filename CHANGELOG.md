@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.0] – 2026-04-25
+
+### Added
+- **Precious Metals** tracker: track gold, silver, platinum, and palladium holdings with quantity in grams, form (physical/digital), and purity (karat, millesimal fineness, percentage).
+- Live spot-price refresh: `POST /api/metals/refresh-prices` fetches USD/troy-oz prices from api.metals.live and auto-updates `current_value = quantity_grams × parsePurity(purity) × price_per_gram` for every holding.
+- `GET /api/metals/spot-prices` returns current spot prices without persisting them.
+- Precious metals contribute to `metalsTotal` in the net worth calculation and are included in `totalAssets` in both backend and Android local API.
+- Dashboard "Breakdown" table and pie chart now show a **Precious Metals** row (gold color).
+- 🥇 **Metals** nav item added to the sidebar.
+- Value history is auto-recorded for each metal on create and on every price/quantity change (entity_type = `'metal'`).
+- Full export/import supports `precious_metals` table (export schema version bumped to 3).
+- `valueHistory` valid entity types now include `'metal'` and `'insurance'`.
+- Android (`metalsService.js`) mirrors all backend metals functionality including purity-aware value calculation and offline price refresh.
+
+### Changed
+- DB schema version: **4 → 5** (new `precious_metals` table + index on `metal_type`).
+- Export schema version: **2 → 3** (precious_metals added to export payload).
+
+---
+
 ## [1.6.0] – 2026-04-25
 
 ### Added

@@ -7,8 +7,8 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 
-// Pie chart colors: Cash & Savings, Investments & Pensions, Investment Holdings, Other Assets, Liabilities
-const COLORS = ['#28a745', '#0366d6', '#6f42c1', '#f66a0a', '#dc3545'];
+// Pie chart colors: Cash & Savings, Investments & Pensions, Investment Holdings, Precious Metals, Other Assets, Liabilities
+const COLORS = ['#28a745', '#0366d6', '#6f42c1', '#f5a623', '#f66a0a', '#dc3545'];
 
 export default function Dashboard() {
   const [summary, setSummary] = useState(null);
@@ -45,6 +45,7 @@ export default function Dashboard() {
     { name: 'Cash & Savings', value: summary.cashTotal },
     { name: 'Investments & Pensions', value: summary.investmentAccountsTotal },
     { name: 'Investment Holdings', value: summary.holdingsTotal },
+    { name: 'Precious Metals', value: summary.metalsTotal ?? 0 },
     { name: 'Other Assets', value: summary.assetsTotal },
     { name: 'Liabilities', value: -summary.totalLiabilities },
   ].filter((d) => d.value > 0) : [];
@@ -100,6 +101,7 @@ export default function Dashboard() {
               <tr><td>Cash &amp; Savings</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.cashTotal)}</td></tr>
               <tr><td>Investments &amp; Pensions</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.investmentAccountsTotal)}</td></tr>
               <tr><td>Investment Holdings</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.holdingsTotal)}</td></tr>
+              <tr><td>🥇 Precious Metals</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.metalsTotal ?? 0)}</td></tr>
               <tr><td>Other Assets</td><td className="amount positive" style={{ textAlign: 'right' }}>{fmt(summary?.assetsTotal)}</td></tr>
               <tr style={{ borderTop: '2px solid var(--color-border)' }}><td><strong>Total Assets</strong></td><td className="amount positive" style={{ textAlign: 'right' }}><strong>{fmt(summary?.totalAssets)}</strong></td></tr>
               <tr><td>Total Liabilities</td><td className="amount negative" style={{ textAlign: 'right' }}>−{fmt(summary?.totalLiabilities)}</td></tr>
