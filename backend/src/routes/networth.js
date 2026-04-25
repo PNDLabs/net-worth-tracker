@@ -20,12 +20,13 @@ function calcNetWorth(conn) {
     `SELECT COALESCE(SUM(COALESCE(current_value, shares * COALESCE(current_price, 0))), 0) as total FROM holdings`
   ).get().total;
   const assetsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM assets').get().total;
+  const metalsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM precious_metals').get().total;
   const liabilitiesTotal = conn.prepare('SELECT COALESCE(SUM(ABS(current_balance)), 0) as total FROM liabilities').get().total;
-  const totalAssets = accountsTotal + holdingsTotal + assetsTotal;
+  const totalAssets = accountsTotal + holdingsTotal + assetsTotal + metalsTotal;
   const totalLiabilities = liabilitiesTotal;
   const netWorth = totalAssets - totalLiabilities;
 
-  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, totalAssets, totalLiabilities, netWorth };
+  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, metalsTotal, totalAssets, totalLiabilities, netWorth };
 }
 
 // GET /api/networth

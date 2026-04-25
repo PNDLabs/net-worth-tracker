@@ -17,8 +17,10 @@ const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
  *   2 – insurance_plans: added terms, covered_conditions
  *   3 – insurance_plans: added insured_name
  *   4 – insurance_plans: added linked_asset_id
+ *   5 – precious_metals table (gold/silver/platinum/palladium holdings with
+ *       live spot price refresh and purity-aware value calculation)
  */
-const DB_SCHEMA_VERSION = 4;
+const DB_SCHEMA_VERSION = 5;
 
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
@@ -146,6 +148,26 @@ function runMigrations(db) {
 
     CREATE INDEX IF NOT EXISTS idx_sip_installments_date
       ON sip_installments(installment_date);
+
+    CREATE TABLE IF NOT EXISTS precious_metals (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      name               TEXT    NOT NULL,
+      metal_type         TEXT    NOT NULL DEFAULT 'gold',
+      metal_form         TEXT    NOT NULL DEFAULT 'physical',
+      purity             TEXT,
+      quantity_grams     REAL    NOT NULL DEFAULT 0,
+      acquisition_date   TEXT,
+      acquisition_cost   REAL,
+      current_price_gram REAL,
+      current_value      REAL    NOT NULL DEFAULT 0,
+      last_price_update  TEXT,
+      notes              TEXT,
+      created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_precious_metals_type
+      ON precious_metals(metal_type);
   `);
 
   // ── Incremental migrations ──────────────────────────────────────────────────
