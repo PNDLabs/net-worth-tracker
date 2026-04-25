@@ -11,7 +11,7 @@ const IMPORT_TYPES = [
 ];
 
 function getCsvTemplates(currency) {
-  const cur = currency || 'XXX';
+  const cur = currency || 'CURRENCY_CODE';
   return {
     accounts: `name,institution,type,currency,balance\nMy Checking,My Bank,checking,${cur},5000\nMy Savings,My Bank,savings,${cur},12000\nRetirement,My Broker,401k,${cur},85000`,
     assets: `name,category,acquisition_date,acquisition_cost,current_value\nPrimary Home,real_estate,2020-06-15,350000,420000\nCar,vehicle,2022-01-10,42000,32000\nBitcoin,crypto,,25000,30000`,

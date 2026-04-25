@@ -20,7 +20,7 @@ async function readDefaultCurrency() {
   try {
     const cfg = await getSettings();
     const raw = cfg.defaultCurrency;
-    if (raw) return typeof raw === 'string' ? raw.replace(/^"|"$/g, '') : null;
+    if (raw != null) return String(raw).replace(/^"|"$/g, '');
   } catch (_) { /* ignore */ }
   return null;
 }

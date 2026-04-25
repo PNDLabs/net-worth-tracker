@@ -22,7 +22,7 @@ Your task is to identify the financial records in the text and return structured
 }
 
 For "accounts" records use:
-{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "<ISO 4217 currency code detected from document, e.g. USD, EUR, INR, GBP, JPY>", "balance": number }
+{ "name": string, "institution": string, "type": "<checking|savings|money_market|cd|brokerage|401k|ira|roth_ira|pension|other>", "currency": "<ISO 4217 currency code detected from document, e.g. USD, EUR, INR, GBP, JPY. If not detectable from the document, omit this field or use null and the user's configured default will be applied.>", "balance": number }
 
 For "assets" records use:
 { "name": string, "category": "<real_estate|vehicle|crypto|collectible|business|other>", "acquisition_date": "YYYY-MM-DD|null", "acquisition_cost": number|null, "current_value": number }
