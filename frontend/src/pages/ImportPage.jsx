@@ -225,7 +225,12 @@ export default function ImportPage() {
       setLoading(true); setError(''); setResult(null); setCsvPreview(null);
       const preview = await api.previewCsv(importType, csvFile);
       if (!preview.records || preview.records.length === 0) {
-        setError('No records could be extracted from the CSV file.');
+        setError(
+          preview.method === 'pattern'
+            ? 'No records could be extracted. Column names did not match the expected format and AI mapping is not enabled. ' +
+              'Enable AI by setting AI_API_KEY in the server .env, or use the CSV template for standard column names.'
+            : 'No records could be extracted from the CSV file.'
+        );
         return;
       }
       setCsvPreview(preview);

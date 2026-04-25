@@ -210,8 +210,11 @@ export async function previewCsv(importType, file, aiOptions = {}) {
     } else {
       throw new Error('AI unavailable');
     }
-  } catch (_aiErr) {
-    // Fallback: basic key normalization
+  } catch (aiErr) {
+    // AI mapping failed or unavailable — fall back to basic key normalization
+    if (aiErr.message !== 'AI unavailable') {
+      console.error('CSV AI column mapping failed, falling back to key normalization:', aiErr.message);
+    }
     mappedRecords = data.map((row) => {
       const out = {};
       for (const [k, v] of Object.entries(row)) {

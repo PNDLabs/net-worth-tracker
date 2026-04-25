@@ -256,8 +256,11 @@ router.post('/csv/preview', upload.single('file'), async (req, res) => {
     } else {
       throw new Error('AI unavailable');
     }
-  } catch (_aiErr) {
-    // Fallback: basic key normalization (same as the direct /csv route)
+  } catch (aiErr) {
+    // AI mapping failed or unavailable — fall back to basic key normalization (same as /csv route)
+    if (aiErr.message !== 'AI unavailable') {
+      console.error('CSV AI column mapping failed, falling back to key normalization:', aiErr.message);
+    }
     mappedRecords = records.map((row) => {
       const out = {};
       for (const [k, v] of Object.entries(row)) {

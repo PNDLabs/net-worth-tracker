@@ -1059,7 +1059,12 @@ async function mapCsvColumnsWithAI(headers, sampleRows, importType, options = {}
   const content = data.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error('AI CSV mapper returned empty response');
 
-  const parsed = JSON.parse(content);
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error('AI CSV mapper returned invalid JSON response');
+  }
   if (!parsed.column_mapping || typeof parsed.column_mapping !== 'object') {
     throw new Error('AI CSV mapper response missing column_mapping');
   }
