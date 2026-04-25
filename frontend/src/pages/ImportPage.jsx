@@ -209,6 +209,7 @@ export default function ImportPage() {
   const [pdfPassword, setPdfPassword] = useState('');
   const [serverAiEnabled, setServerAiEnabled] = useState(false);
   const [pdfPreview, setPdfPreview] = useState(null);
+  const [csvPreview, setCsvPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -221,9 +222,24 @@ export default function ImportPage() {
   async function importCsv() {
     if (!csvFile) return setError('Please select a CSV file.');
     try {
-      setLoading(true); setError(''); setResult(null);
-      const res = await api.importCsv(importType, csvFile);
+      setLoading(true); setError(''); setResult(null); setCsvPreview(null);
+      const preview = await api.previewCsv(importType, csvFile);
+      if (!preview.records || preview.records.length === 0) {
+        setError('No records could be extracted from the CSV file.');
+        return;
+      }
+      setCsvPreview(preview);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function confirmCsvImport(overrideType, finalRecords) {
+    try {
+      setLoading(true); setError('');
+      const res = await api.importJson(overrideType, finalRecords);
       setResult(res);
+      setCsvPreview(null);
+      setCsvFile(null);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -329,10 +345,12 @@ export default function ImportPage() {
 
           {tab === 'csv' && (
             <div className="card mt-4">
-              <div className="section-title">CSV Template</div>
+              <div className="section-title">CSV Tips</div>
               <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-                Copy the template below to create your CSV file.
+                With AI enabled, <strong>any column names are accepted</strong> — the AI maps them automatically.<br />
+                Without AI, column names must match the template exactly.
               </p>
+              <div className="section-title" style={{ marginTop: 8 }}>Template</div>
               <pre style={{ fontSize: 11, background: 'var(--color-surface-2)', padding: 10, borderRadius: 6, overflow: 'auto', whiteSpace: 'pre-wrap', border: '1px solid var(--color-border)' }}>
                 {CSV_TEMPLATES[importType]}
               </pre>
@@ -372,7 +390,7 @@ export default function ImportPage() {
               {['pdf', 'text', 'csv', 'json'].map((t) => (
                 <button
                   key={t}
-                  onClick={() => { setTab(t); setError(''); setResult(null); setPdfPreview(null); }}
+                  onClick={() => { setTab(t); setError(''); setResult(null); setPdfPreview(null); setCsvPreview(null); }}
                   style={{
                     borderRadius: 0, borderBottom: tab === t ? '2px solid var(--color-primary)' : '2px solid transparent',
                     background: 'none', padding: '8px 20px',
@@ -463,12 +481,17 @@ export default function ImportPage() {
 
             {tab === 'csv' && (
               <>
+                <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: 12, background: serverAiEnabled ? '#e8f5e9' : '#fff3e0', color: serverAiEnabled ? '#2e7d32' : '#e65100', border: `1px solid ${serverAiEnabled ? '#a5d6a7' : '#ffcc80'}`, marginBottom: 12 }}>
+                  {serverAiEnabled
+                    ? '✅ AI column mapping enabled — any column names will be automatically understood.'
+                    : '💡 Set AI_API_KEY in .env to enable smart column mapping for non-standard CSV formats.'}
+                </div>
                 <div className="form-group mb-4">
                   <label>Select CSV File</label>
-                  <input type="file" accept=".csv,text/csv" onChange={(e) => setCsvFile(e.target.files[0])} />
+                  <input type="file" accept=".csv,text/csv" onChange={(e) => { setCsvFile(e.target.files[0]); setCsvPreview(null); setResult(null); setError(''); }} />
                 </div>
-                <button className="btn-primary" onClick={importCsv} disabled={loading}>
-                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</> : '📥 Import CSV'}
+                <button className="btn-primary" onClick={importCsv} disabled={loading || !csvFile}>
+                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Parsing…</> : '🔍 Parse & Preview'}
                 </button>
               </>
             )}
@@ -499,6 +522,16 @@ export default function ImportPage() {
               loading={loading}
               onConfirm={confirmPdfImport}
               onCancel={() => setPdfPreview(null)}
+            />
+          )}
+
+          {/* CSV Preview */}
+          {csvPreview && (
+            <PdfPreviewPanel
+              preview={csvPreview}
+              loading={loading}
+              onConfirm={confirmCsvImport}
+              onCancel={() => setCsvPreview(null)}
             />
           )}
         </div>

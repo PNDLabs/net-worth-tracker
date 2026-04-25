@@ -4,7 +4,7 @@ const multer = require('multer');
 const { parse } = require('csv-parse/sync');
 const db = require('../db/database');
 const { extractPdfText } = require('../utils/pdfExtractor');
-const { parseStatement } = require('../utils/statementParser');
+const { parseStatement, mapCsvColumnsWithAI } = require('../utils/statementParser');
 
 class DuplicateError extends Error {}
 
@@ -199,9 +199,79 @@ router.post('/csv', upload.single('file'), (req, res) => {
 });
 
 /**
- * POST /api/import/json
- * Body: { import_type: 'accounts'|'assets'|'liabilities', records: [...] }
+ * POST /api/import/csv/preview
+ * Upload a CSV file, use AI to intelligently map column headers to target schema fields,
+ * and return a preview of the mapped records WITHOUT writing to the database.
+ *
+ * Query params: ?import_type=accounts|assets|liabilities|insurance|sip  (default: accounts)
+ *
+ * When AI is unavailable, falls back to basic lowercase+underscore key normalization.
  */
+router.post('/csv/preview', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const importType = req.query.import_type || 'accounts';
+  if (!VALID_IMPORT_TYPES.includes(importType)) {
+    return res.status(400).json({ error: `import_type must be one of: ${VALID_IMPORT_TYPES.join(', ')}` });
+  }
+
+  let records;
+  try {
+    records = parse(req.file.buffer, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      cast: true,
+    });
+  } catch (err) {
+    return res.status(422).json({ error: `CSV parse error: ${err.message}` });
+  }
+
+  if (records.length === 0) {
+    return res.status(422).json({ error: 'CSV file is empty or has no data rows' });
+  }
+
+  const headers = Object.keys(records[0]);
+  const sampleRows = records.slice(0, 3);
+
+  let mappedRecords;
+  let method;
+  let validationNotes = [];
+
+  try {
+    const aiResult = await mapCsvColumnsWithAI(headers, sampleRows, importType);
+    if (aiResult && aiResult.column_mapping) {
+      // Apply the AI column mapping to every row
+      mappedRecords = records.map((row) => {
+        const mapped = {};
+        for (const [csvCol, targetField] of Object.entries(aiResult.column_mapping)) {
+          if (targetField && row[csvCol] !== undefined && row[csvCol] !== null && row[csvCol] !== '') {
+            mapped[targetField] = row[csvCol];
+          }
+        }
+        return mapped;
+      });
+      method = 'ai';
+      validationNotes = aiResult.mapping_notes || [];
+    } else {
+      throw new Error('AI unavailable');
+    }
+  } catch (_aiErr) {
+    // Fallback: basic key normalization (same as the direct /csv route)
+    mappedRecords = records.map((row) => {
+      const out = {};
+      for (const [k, v] of Object.entries(row)) {
+        out[k.toLowerCase().replace(/\s+/g, '_')] = v;
+      }
+      return out;
+    });
+    method = 'pattern';
+  }
+
+  res.json({ import_type: importType, records: mappedRecords, method, validation_notes: validationNotes });
+});
+
+
 router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   const { import_type: importType = 'accounts', records } = req.body || {};
 

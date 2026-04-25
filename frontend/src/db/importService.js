@@ -10,7 +10,7 @@
 
 import Papa from 'papaparse';
 import { query, run } from './dbService';
-import { parseStatement } from '../hooks/statementParser';
+import { parseStatement, mapCsvColumnsWithAI } from '../hooks/statementParser';
 import { extractPdfText } from '../hooks/pdfService';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -161,6 +161,68 @@ export async function importCsv(importType, file) {
     throw new Error(`CSV parse error: ${errors[0].message}`);
   }
   return importRecords(importType, data);
+}
+
+/**
+ * Preview a CSV file using AI to map arbitrary column headers to the target schema.
+ * Falls back to basic key normalization when AI is unavailable.
+ *
+ * @param {string} importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {File}   file        – CSV File object
+ * @param {object} [aiOptions] – { apiKey, apiUrl, model } from aiSettings.js
+ * @returns {Promise<{ import_type, records, method, validation_notes }>}
+ */
+export async function previewCsv(importType, file, aiOptions = {}) {
+  const text = await file.text();
+  const { data, errors } = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: true,
+  });
+  if (errors.length && !data.length) {
+    throw new Error(`CSV parse error: ${errors[0].message}`);
+  }
+  if (data.length === 0) {
+    throw new Error('CSV file is empty or has no data rows');
+  }
+
+  const headers = Object.keys(data[0]);
+  const sampleRows = data.slice(0, 3);
+
+  let mappedRecords;
+  let method;
+  let validationNotes = [];
+
+  try {
+    const aiResult = await mapCsvColumnsWithAI(headers, sampleRows, importType, aiOptions);
+    if (aiResult && aiResult.column_mapping) {
+      mappedRecords = data.map((row) => {
+        const mapped = {};
+        for (const [csvCol, targetField] of Object.entries(aiResult.column_mapping)) {
+          if (targetField && row[csvCol] !== undefined && row[csvCol] !== null && row[csvCol] !== '') {
+            mapped[targetField] = row[csvCol];
+          }
+        }
+        return mapped;
+      });
+      method = 'ai';
+      validationNotes = aiResult.mapping_notes || [];
+    } else {
+      throw new Error('AI unavailable');
+    }
+  } catch (_aiErr) {
+    // Fallback: basic key normalization
+    mappedRecords = data.map((row) => {
+      const out = {};
+      for (const [k, v] of Object.entries(row)) {
+        out[k.toLowerCase().replace(/\s+/g, '_')] = v;
+      }
+      return out;
+    });
+    method = 'pattern';
+  }
+
+  return { import_type: importType, records: mappedRecords, method, validation_notes: validationNotes };
 }
 
 /**

@@ -988,4 +988,83 @@ async function parseStatement(text, options = {}) {
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }
 
-module.exports = { parseStatement, detectStatementType, parseCasStatement };
+// ─── AI CSV Column Mapper ─────────────────────────────────────────────────────
+
+const CSV_COLUMN_MAPPER_PROMPT = `You are a financial CSV column mapper. Given CSV column headers and sample data, map each header to the correct target field for the specified import type.
+
+Target fields per import type:
+- accounts: name (required), institution, type (checking/savings/money_market/cd/brokerage/401k/ira/roth_ira/pension/other), currency, balance (required)
+- assets: name (required), category (real_estate/vehicle/crypto/collectible/business/other), acquisition_date (YYYY-MM-DD), acquisition_cost, current_value (required)
+- liabilities: name (required), lender, type (mortgage/auto/student/personal/credit_card/heloc/other), original_principal, current_balance (required), interest_rate, minimum_payment
+- insurance: name (required), provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes
+- sip: name (required), symbol, amount (required), units, nav, installment_date (YYYY-MM-DD), notes
+
+Return ONLY JSON (no markdown fences, no prose):
+{
+  "column_mapping": { "<csv_header>": "<target_field_or_null>", ... },
+  "mapping_notes": ["<short explanation of any non-obvious mapping>"]
+}
+
+Rules:
+- Map each CSV column to the single best matching target field for the given import_type, or null if no match.
+- Do NOT map two columns to the same target field; pick the best one for each target field.
+- For the required "name" field: if no column is literally named "name", map the most descriptive text column (e.g. "Company Name", "Stock Name", "Fund Name", "Scheme", "Scrip", "Security", "Description") to "name".
+- Semantic aliases: "Ticker"/"Symbol"/"Scrip"/"ISIN" → symbol; "Qty"/"Quantity"/"Units" → shares for assets or units for sip; "LTP"/"Last Price"/"CMP"/"Mkt Price"/"Current Price" → current_price or current_value; "Market Value"/"Mkt Value"/"Current Value"/"Present Value"/"Total Value"/"Portfolio Value" → current_value or balance; "Cost"/"Avg Cost"/"Avg Price"/"Purchase Price" → acquisition_cost; "P&L"/"Gain"/"Gain/Loss"/"Return" → null; "Purchase Date"/"Trade Date"/"Date" → acquisition_date or installment_date; "Lender"/"Bank"/"Creditor" → lender; "Rate"/"Interest Rate"/"APR" → interest_rate.
+- Convert amounts: remove currency symbols and commas from values before treating as numbers.`;
+
+/**
+ * Use AI to map arbitrary CSV column headers to the target schema fields.
+ *
+ * @param {string[]} headers     – column names from the CSV header row
+ * @param {object[]} sampleRows  – first few data rows (raw objects with CSV header keys)
+ * @param {string}   importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {object}   options     – optional: { apiKey, apiUrl, model }
+ * @returns {Promise<{ column_mapping: object, mapping_notes: string[] }|null>}
+ */
+async function mapCsvColumnsWithAI(headers, sampleRows, importType, options = {}) {
+  const apiKey = options.apiKey || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const apiUrl = options.apiUrl || process.env.AI_API_URL || 'https://api.openai.com/v1';
+  const model = options.model || process.env.AI_MODEL || 'gpt-4o-mini';
+
+  const userMessage =
+    `Import type: "${importType}"\n` +
+    `CSV headers: ${JSON.stringify(headers)}\n` +
+    `Sample rows (first ${sampleRows.length}):\n${JSON.stringify(sampleRows, null, 2)}`;
+
+  const response = await fetch(`${apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: CSV_COLUMN_MAPPER_PROMPT },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI CSV mapper error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI CSV mapper returned empty response');
+
+  const parsed = JSON.parse(content);
+  if (!parsed.column_mapping || typeof parsed.column_mapping !== 'object') {
+    throw new Error('AI CSV mapper response missing column_mapping');
+  }
+  if (!Array.isArray(parsed.mapping_notes)) parsed.mapping_notes = [];
+  return parsed;
+}
+
+module.exports = { parseStatement, detectStatementType, parseCasStatement, mapCsvColumnsWithAI };

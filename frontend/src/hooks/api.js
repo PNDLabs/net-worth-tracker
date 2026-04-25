@@ -87,6 +87,20 @@ export const api = {
     return res.json();
   },
 
+  previewCsv: async (importType, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/import/csv/preview?import_type=${importType}`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed: ${res.status}`);
+    }
+    return res.json();
+  },
+
   previewPdf: async (file, password) => {
     const formData = new FormData();
     formData.append('file', file);
