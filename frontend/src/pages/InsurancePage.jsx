@@ -392,7 +392,7 @@ export default function InsurancePage() {
 
             <div className="form-row">
               <div className="form-group">
-                <label>Premium Amount ($)</label>
+                <label>Premium Amount{currency ? ` (${currency})` : ''}</label>
                 <input type="number" step="0.01" value={form.premium_amount} onChange={(e) => setForm({ ...form, premium_amount: e.target.value })} placeholder="150" />
               </div>
               <div className="form-group">
@@ -402,7 +402,7 @@ export default function InsurancePage() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Coverage Amount ($)</label>
+                <label>Coverage Amount{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={form.coverage_amount} onChange={(e) => setForm({ ...form, coverage_amount: e.target.value })} placeholder="500000" />
               </div>
             </div>

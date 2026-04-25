@@ -190,13 +190,13 @@ export default function LiabilitiesPage() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Original Principal ($)</label>
+                <label>Original Principal{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={form.original_principal} onChange={(e) => setForm({ ...form, original_principal: e.target.value })} placeholder="400000" />
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Current Balance ($) *</label>
+                <label>Current Balance{currency ? ` (${currency})` : ''} *</label>
                 <input type="number" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} placeholder="380000" />
               </div>
               <div className="form-group">
@@ -204,7 +204,7 @@ export default function LiabilitiesPage() {
                 <input type="number" step="0.01" value={form.interest_rate} onChange={(e) => setForm({ ...form, interest_rate: e.target.value })} placeholder="3.5" />
               </div>
               <div className="form-group">
-                <label>Min. Payment ($/mo)</label>
+                <label>Min. Payment{currency ? ` (${currency}/mo)` : ' (per month)'}</label>
                 <input type="number" value={form.minimum_payment} onChange={(e) => setForm({ ...form, minimum_payment: e.target.value })} placeholder="1800" />
               </div>
             </div>

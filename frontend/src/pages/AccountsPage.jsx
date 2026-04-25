@@ -301,7 +301,7 @@ export default function AccountsPage() {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Current Balance ($)</label>
+                <label>Current Balance{form.currency ? ` (${form.currency})` : ''}</label>
                 <input type="number" value={form.balance} onChange={(e) => setForm({ ...form, balance: e.target.value })} placeholder="0" />
               </div>
             </div>
@@ -338,11 +338,11 @@ export default function AccountsPage() {
                 <input type="number" value={holdingForm.shares} onChange={(e) => setHoldingForm({ ...holdingForm, shares: e.target.value })} placeholder="10" />
               </div>
               <div className="form-group">
-                <label>Current Price ($)</label>
+                <label>Current Price{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={holdingForm.current_price} onChange={(e) => setHoldingForm({ ...holdingForm, current_price: e.target.value })} placeholder="180.00" />
               </div>
               <div className="form-group">
-                <label>Current Value ($)</label>
+                <label>Current Value{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={holdingForm.current_value} onChange={(e) => setHoldingForm({ ...holdingForm, current_value: e.target.value })} placeholder="1800" />
               </div>
             </div>
