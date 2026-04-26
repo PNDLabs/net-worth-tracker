@@ -187,6 +187,7 @@ router.get('/spot-prices', async (req, res) => {
     const prices = await fetchSpotPricesPerGram(currency);
     res.json({ prices, currency, unit: `${currency}_per_gram`, source: SPOT_PRICE_URL });
   } catch (err) {
+    console.error('[metals] GET /spot-prices failed:', err.message);
     res.status(502).json({ error: `Could not fetch spot prices: ${err.message}` });
   }
 });
@@ -200,6 +201,7 @@ router.post('/refresh-prices', async (req, res) => {
   try {
     prices = await fetchSpotPricesPerGram(currency);
   } catch (err) {
+    console.error('[metals] POST /refresh-prices failed to fetch spot prices:', err.message);
     return res.status(502).json({ error: `Could not fetch spot prices: ${err.message}` });
   }
 

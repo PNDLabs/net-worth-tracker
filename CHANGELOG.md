@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.4] – 2026-04-26
+
+### Fixed
+- **metals: add error logging to spot-price fetch failures** — the `/api/metals/spot-prices` and `/api/metals/refresh-prices` catch blocks now call `console.error` before returning 502, so the actual failure reason (e.g. DNS resolution failure, timeout, unexpected API response) appears in `docker compose logs backend`. Previously the backend returned a 502 silently with no log output, making the root cause invisible.
+
+---
+
 ## [1.7.3] – 2026-04-26
 
 ### Fixed
