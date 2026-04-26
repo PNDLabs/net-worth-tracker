@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
 
-const VALID_ENTITY_TYPES = ['account', 'asset', 'liability'];
+const VALID_ENTITY_TYPES = ['account', 'asset', 'liability', 'insurance', 'metal'];
 
 // GET /api/value-history?entity_type=account&entity_id=1
 // Returns chronological history for a specific entity

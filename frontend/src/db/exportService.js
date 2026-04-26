@@ -33,6 +33,7 @@ export async function exportAllData() {
     liabilities,
     insurance_plans,
     sip_installments,
+    precious_metals,
     value_history,
     settingsRows,
   ] = await Promise.all([
@@ -42,6 +43,7 @@ export async function exportAllData() {
     query('SELECT * FROM liabilities ORDER BY id'),
     query('SELECT * FROM insurance_plans ORDER BY id'),
     query('SELECT * FROM sip_installments ORDER BY id'),
+    query('SELECT * FROM precious_metals ORDER BY id'),
     query('SELECT * FROM value_history ORDER BY id'),
     query('SELECT key, value FROM settings'),
   ]);
@@ -64,6 +66,7 @@ export async function exportAllData() {
       liabilities,
       insurance_plans,
       sip_installments,
+      precious_metals,
       value_history,
       settings,
     },
@@ -106,6 +109,7 @@ export async function importAllData(payload) {
     liabilities:     { imported: 0, skipped: 0 },
     insurance_plans: { imported: 0, skipped: 0 },
     sip_installments: { imported: 0, skipped: 0 },
+    precious_metals: { imported: 0, skipped: 0 },
     value_history:   { imported: 0, skipped: 0 },
     settings:        { imported: 0, skipped: 0 },
   };
@@ -115,12 +119,14 @@ export async function importAllData(payload) {
   const assetIdMap      = {};
   const liabilityIdMap  = {};
   const insuranceIdMap  = {};
+  const metalIdMap      = {};
 
   // Track which old IDs were newly created (vs mapped to existing rows)
   const newAccountOldIds    = new Set();
   const newAssetOldIds      = new Set();
   const newLiabilityOldIds  = new Set();
   const newInsuranceOldIds  = new Set();
+  const newMetalOldIds      = new Set();
 
   // ── 1. Settings ────────────────────────────────────────────────────────────
   const settings = data.settings || {};
@@ -317,7 +323,42 @@ export async function importAllData(payload) {
     stats.sip_installments.imported++;
   }
 
-  // ── 8. Value history ──────────────────────────────────────────────────────
+  // ── 8. Precious metals ────────────────────────────────────────────────────
+  for (const row of (data.precious_metals || [])) {
+    const existing = await query(
+      `SELECT id FROM precious_metals WHERE lower(name)=lower(?) AND lower(metal_type)=lower(?)`,
+      [String(row.name || ''), String(row.metal_type || 'gold')]
+    );
+    if (existing.length) {
+      metalIdMap[row.id] = existing[0].id;
+      stats.precious_metals.skipped++;
+      continue;
+    }
+    const { lastId } = await run(
+      `INSERT INTO precious_metals
+         (name, metal_type, metal_form, purity, quantity_grams, acquisition_date,
+          acquisition_cost, current_price_gram, current_value, last_price_update,
+          notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(row.name), String(row.metal_type || 'gold'),
+        String(row.metal_form || 'physical'), row.purity ? String(row.purity) : null,
+        Number(row.quantity_grams || 0),
+        row.acquisition_date ? String(row.acquisition_date) : null,
+        row.acquisition_cost != null ? Number(row.acquisition_cost) : null,
+        row.current_price_gram != null ? Number(row.current_price_gram) : null,
+        Number(row.current_value || 0),
+        row.last_price_update ? String(row.last_price_update) : null,
+        row.notes ? String(row.notes) : null,
+        row.created_at || null, row.updated_at || null,
+      ]
+    );
+    metalIdMap[row.id] = lastId;
+    newMetalOldIds.add(row.id);
+    stats.precious_metals.imported++;
+  }
+
+  // ── 9. Value history ──────────────────────────────────────────────────────
   // Only import history for entities that were newly created in this import
   // run to avoid duplicating history on entities that already existed.
   const entityNewSets = {
@@ -325,6 +366,7 @@ export async function importAllData(payload) {
     asset:     { newOldIds: newAssetOldIds,      idMap: assetIdMap },
     liability: { newOldIds: newLiabilityOldIds,  idMap: liabilityIdMap },
     insurance: { newOldIds: newInsuranceOldIds,  idMap: insuranceIdMap },
+    metal:     { newOldIds: newMetalOldIds,       idMap: metalIdMap },
   };
 
   for (const row of (data.value_history || [])) {

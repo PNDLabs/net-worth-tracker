@@ -11,6 +11,7 @@
 
 import * as accountsSvc from '../db/accountsService';
 import * as assetsSvc   from '../db/assetsService';
+import * as metalsSvc   from '../db/metalsService';
 import * as liabSvc     from '../db/liabilitiesService';
 import * as insSvc      from '../db/insuranceService';
 import * as sipSvc      from '../db/sipService';
@@ -36,6 +37,14 @@ export const api = {
   createAsset: (data) => assetsSvc.createAsset(data),
   updateAsset: (id, data) => assetsSvc.updateAsset(id, data),
   deleteAsset: (id) => assetsSvc.deleteAsset(id),
+
+  // ─── Precious Metals ────────────────────────────────────────────────────────
+  getMetals: () => metalsSvc.getMetals(),
+  createMetal: (data) => metalsSvc.createMetal(data),
+  updateMetal: (id, data) => metalsSvc.updateMetal(id, data),
+  deleteMetal: (id) => metalsSvc.deleteMetal(id),
+  getMetalSpotPrices: () => metalsSvc.getSpotPrices(),
+  refreshMetalPrices: () => metalsSvc.refreshPrices(),
 
   // ─── Liabilities ────────────────────────────────────────────────────────────
   getLiabilities: () => liabSvc.getLiabilities(),

@@ -5,6 +5,23 @@ const fs = require('fs');
 const DB_DIR = process.env.DB_DIR || path.join(__dirname, '../../data');
 const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
 
+/**
+ * DB_SCHEMA_VERSION – increment this integer every time the SQLite schema
+ * changes (new table, new column, new index, etc.).
+ * The value is stored in SQLite's built-in PRAGMA user_version so it can be
+ * read at runtime without querying application tables.
+ *
+ * History:
+ *   1 – initial schema (accounts, holdings, assets, liabilities, snapshots,
+ *       insurance_plans, settings, value_history, sip_installments)
+ *   2 – insurance_plans: added terms, covered_conditions
+ *   3 – insurance_plans: added insured_name
+ *   4 – insurance_plans: added linked_asset_id
+ *   5 – precious_metals table (gold/silver/platinum/palladium holdings with
+ *       live spot price refresh and purity-aware value calculation)
+ */
+const DB_SCHEMA_VERSION = 5;
+
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -131,6 +148,26 @@ function runMigrations(db) {
 
     CREATE INDEX IF NOT EXISTS idx_sip_installments_date
       ON sip_installments(installment_date);
+
+    CREATE TABLE IF NOT EXISTS precious_metals (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      name               TEXT    NOT NULL,
+      metal_type         TEXT    NOT NULL DEFAULT 'gold',
+      metal_form         TEXT    NOT NULL DEFAULT 'physical',
+      purity             TEXT,
+      quantity_grams     REAL    NOT NULL DEFAULT 0,
+      acquisition_date   TEXT,
+      acquisition_cost   REAL,
+      current_price_gram REAL,
+      current_value      REAL    NOT NULL DEFAULT 0,
+      last_price_update  TEXT,
+      notes              TEXT,
+      created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_precious_metals_type
+      ON precious_metals(metal_type);
   `);
 
   // ── Incremental migrations ──────────────────────────────────────────────────
@@ -143,6 +180,9 @@ function runMigrations(db) {
   addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
   addColumnIfMissing('insurance_plans', 'insured_name', 'TEXT');
   addColumnIfMissing('insurance_plans', 'linked_asset_id', 'INTEGER REFERENCES assets(id) ON DELETE SET NULL');
+
+  // Stamp the schema version so tooling can inspect it without querying tables.
+  db.pragma(`user_version = ${DB_SCHEMA_VERSION}`);
 }
 
 let _db;
@@ -158,4 +198,4 @@ function resetDb() {
   _db = null;
 }
 
-module.exports = { createDatabase, getDb, resetDb };
+module.exports = { createDatabase, getDb, resetDb, DB_SCHEMA_VERSION };

@@ -31,6 +31,11 @@ export default function SettingsPage() {
   const [form, setForm] = useState({ apiKey: '', apiUrl: DEFAULT_URL, model: DEFAULT_MODEL });
   const [showKey, setShowKey] = useState(false);
 
+  // Metal Price API key state (applies to both web and native)
+  const [metalPriceApiKey, setMetalPriceApiKey] = useState('');
+  const [showMetalKey, setShowMetalKey] = useState(false);
+  const [savingMetalKey, setSavingMetalKey] = useState(false);
+
   // Web state
   const [webConfig, setWebConfig] = useState(null);
 
@@ -42,13 +47,27 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (isNative) {
-      api.getAiSettings()
-        .then((s) => setForm({ apiKey: s.apiKey || '', apiUrl: s.apiUrl || DEFAULT_URL, model: s.model || DEFAULT_MODEL }))
+      Promise.all([
+        api.getAiSettings(),
+        api.getSettings(),
+      ])
+        .then(([s, settings]) => {
+          setForm({ apiKey: s.apiKey || '', apiUrl: s.apiUrl || DEFAULT_URL, model: s.model || DEFAULT_MODEL });
+          const raw = settings.metalPriceApiKey;
+          setMetalPriceApiKey(raw ? String(raw).replace(/^"|"$/g, '') : '');
+        })
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false));
     } else {
-      api.getConfig()
-        .then((cfg) => setWebConfig(cfg))
+      Promise.all([
+        api.getConfig(),
+        api.getSettings(),
+      ])
+        .then(([cfg, settings]) => {
+          setWebConfig(cfg);
+          const raw = settings.metalPriceApiKey;
+          setMetalPriceApiKey(raw ? String(raw).replace(/^"|"$/g, '') : '');
+        })
         .catch((e) => setError(e.message))
         .finally(() => setLoading(false));
     }
@@ -74,6 +93,32 @@ export default function SettingsPage() {
       await api.saveAiSettings({ apiKey: '', apiUrl: DEFAULT_URL, model: DEFAULT_MODEL });
       setForm({ apiKey: '', apiUrl: DEFAULT_URL, model: DEFAULT_MODEL });
       setMsg('AI settings cleared.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function saveMetalPriceApiKey() {
+    try {
+      setSavingMetalKey(true);
+      setError('');
+      await api.updateSettings({ metalPriceApiKey: metalPriceApiKey.trim() });
+      setMsg('Metal Price API key saved.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingMetalKey(false);
+    }
+  }
+
+  async function clearMetalPriceApiKey() {
+    if (!confirm('Clear the Metal Price API key?')) return;
+    try {
+      await api.updateSettings({ metalPriceApiKey: '' });
+      setMetalPriceApiKey('');
+      setMsg('Metal Price API key cleared.');
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
       setError(e.message);
@@ -228,6 +273,47 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Metal Price API Key ── */}
+      <div className="card" style={{ maxWidth: 540 }}>
+        <div className="section-title">🥇 Metal Price API Key</div>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 16 }}>
+          Enter your <a href="https://metalpriceapi.com" target="_blank" rel="noreferrer">metalpriceapi.com</a> API
+          key for reliable precious metals prices in your local currency — no currency conversion needed.
+          When set, this is used as the primary source. Without a key, free fallback APIs are used.
+        </p>
+
+        <div className="form-group">
+          <label>API Key</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type={showMetalKey ? 'text' : 'password'}
+              value={metalPriceApiKey}
+              onChange={(e) => setMetalPriceApiKey(e.target.value)}
+              placeholder="Enter your metalpriceapi.com API key"
+              style={{ flex: 1, fontFamily: 'monospace' }}
+            />
+            <button className="btn-ghost btn-sm" onClick={() => setShowMetalKey((v) => !v)}>
+              {showMetalKey ? '🙈 Hide' : '👁 Show'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn-primary" onClick={saveMetalPriceApiKey} disabled={savingMetalKey}>
+            {savingMetalKey ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : '💾 Save Key'}
+          </button>
+          {metalPriceApiKey && (
+            <button className="btn-danger" onClick={clearMetalPriceApiKey}>🗑 Clear Key</button>
+          )}
+        </div>
+
+        <div style={{ marginTop: 12, padding: '8px 12px', background: metalPriceApiKey ? 'var(--color-success-bg, #e6ffed)' : 'var(--color-surface-2)', borderRadius: 6, fontSize: 13, color: metalPriceApiKey ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
+          {metalPriceApiKey
+            ? '✅ Metal Price API key configured — prices fetched directly in your currency.'
+            : 'ℹ️ No key set — using free fallback APIs (may be less reliable).'}
+        </div>
+      </div>
 
       {/* ── Export / Import ── */}
       <div className="card" style={{ maxWidth: 540 }}>

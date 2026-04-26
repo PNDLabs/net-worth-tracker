@@ -128,6 +128,26 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_sip_installments_date
     ON sip_installments(installment_date);
+
+  CREATE TABLE IF NOT EXISTS precious_metals (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    name               TEXT    NOT NULL,
+    metal_type         TEXT    NOT NULL DEFAULT 'gold',
+    metal_form         TEXT    NOT NULL DEFAULT 'physical',
+    purity             TEXT,
+    quantity_grams     REAL    NOT NULL DEFAULT 0,
+    acquisition_date   TEXT,
+    acquisition_cost   REAL,
+    current_price_gram REAL,
+    current_value      REAL    NOT NULL DEFAULT 0,
+    last_price_update  TEXT,
+    notes              TEXT,
+    created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_precious_metals_type
+    ON precious_metals(metal_type);
 `;
 
 async function _init() {

@@ -7,6 +7,7 @@ import InsurancePage from './pages/InsurancePage';
 import HistoryPage from './pages/HistoryPage';
 import ImportPage from './pages/ImportPage';
 import SipPage from './pages/SipPage';
+import MetalsPage from './pages/MetalsPage';
 import SettingsPage from './pages/SettingsPage';
 import { CurrencyProvider, useCurrency } from './hooks/CurrencyContext';
 import { APP_VERSION } from './version';
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { id: 'dashboard',    label: 'Dashboard',    icon: '📊' },
   { id: 'accounts',     label: 'Accounts',     icon: '🏦' },
   { id: 'assets',       label: 'Assets',       icon: '🏠' },
+  { id: 'metals',       label: 'Metals',       icon: '🥇' },
   { id: 'liabilities',  label: 'Liabilities',  icon: '💳' },
   { id: 'insurance',    label: 'Insurance',    icon: '🛡️' },
   { id: 'sip',          label: 'SIP Tracker',  icon: '💰' },
@@ -27,6 +29,7 @@ const PAGES = {
   dashboard:   Dashboard,
   accounts:    AccountsPage,
   assets:      AssetsPage,
+  metals:      MetalsPage,
   liabilities: LiabilitiesPage,
   insurance:   InsurancePage,
   sip:         SipPage,

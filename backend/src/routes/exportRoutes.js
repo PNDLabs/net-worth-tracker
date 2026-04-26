@@ -13,8 +13,8 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-const APP_VERSION           = '1.0.0';
-const EXPORT_SCHEMA_VERSION = 2;
+const APP_VERSION           = '1.7.6';
+const EXPORT_SCHEMA_VERSION = 3;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,7 @@ router.get('/', (req, res) => {
         liabilities:      conn.prepare('SELECT * FROM liabilities ORDER BY id').all(),
         insurance_plans:  conn.prepare('SELECT * FROM insurance_plans ORDER BY id').all(),
         sip_installments: conn.prepare('SELECT * FROM sip_installments ORDER BY id').all(),
+        precious_metals:  conn.prepare('SELECT * FROM precious_metals ORDER BY id').all(),
         value_history:    conn.prepare('SELECT * FROM value_history ORDER BY id').all(),
         settings:         parseSettings(conn.prepare('SELECT key, value FROM settings').all()),
       },
@@ -91,6 +92,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
     liabilities:      { imported: 0, skipped: 0 },
     insurance_plans:  { imported: 0, skipped: 0 },
     sip_installments: { imported: 0, skipped: 0 },
+    precious_metals:  { imported: 0, skipped: 0 },
     value_history:    { imported: 0, skipped: 0 },
     settings:         { imported: 0, skipped: 0 },
   };
@@ -100,12 +102,14 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
   const assetIdMap     = {};
   const liabilityIdMap = {};
   const insuranceIdMap = {};
+  const metalIdMap     = {};
 
   // Which old IDs were freshly inserted (not deduped against existing rows)
   const newAccountOldIds   = new Set();
   const newAssetOldIds     = new Set();
   const newLiabilityOldIds = new Set();
   const newInsuranceOldIds = new Set();
+  const newMetalOldIds     = new Set();
 
   const run = conn.transaction(() => {
     // ── 1. Settings ──────────────────────────────────────────────────────────
@@ -296,7 +300,42 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
       stats.sip_installments.imported++;
     }
 
-    // ── 8. Value history ─────────────────────────────────────────────────────
+    // ── 8. Precious metals ───────────────────────────────────────────────────
+    const findMetal = conn.prepare(
+      `SELECT id FROM precious_metals WHERE lower(name)=lower(?) AND lower(metal_type)=lower(?)`
+    );
+    const insertMetal = conn.prepare(
+      `INSERT INTO precious_metals
+         (name, metal_type, metal_form, purity, quantity_grams, acquisition_date,
+          acquisition_cost, current_price_gram, current_value, last_price_update,
+          notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const row of (data.precious_metals || [])) {
+      const existing = findMetal.get(String(row.name || ''), String(row.metal_type || 'gold'));
+      if (existing) {
+        metalIdMap[row.id] = existing.id;
+        stats.precious_metals.skipped++;
+        continue;
+      }
+      const result = insertMetal.run(
+        String(row.name), String(row.metal_type || 'gold'),
+        String(row.metal_form || 'physical'), row.purity ? String(row.purity) : null,
+        Number(row.quantity_grams || 0),
+        row.acquisition_date ? String(row.acquisition_date) : null,
+        row.acquisition_cost != null ? Number(row.acquisition_cost) : null,
+        row.current_price_gram != null ? Number(row.current_price_gram) : null,
+        Number(row.current_value || 0),
+        row.last_price_update ? String(row.last_price_update) : null,
+        row.notes ? String(row.notes) : null,
+        row.created_at || null, row.updated_at || null
+      );
+      metalIdMap[row.id] = result.lastInsertRowid;
+      newMetalOldIds.add(row.id);
+      stats.precious_metals.imported++;
+    }
+
+    // ── 9. Value history ─────────────────────────────────────────────────────
     const insertHistory = conn.prepare(
       `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
@@ -306,6 +345,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
       asset:     { newOldIds: newAssetOldIds,      idMap: assetIdMap },
       liability: { newOldIds: newLiabilityOldIds,  idMap: liabilityIdMap },
       insurance: { newOldIds: newInsuranceOldIds,  idMap: insuranceIdMap },
+      metal:     { newOldIds: newMetalOldIds,       idMap: metalIdMap },
     };
     for (const row of (data.value_history || [])) {
       const entry = entityNewSets[row.entity_type];
