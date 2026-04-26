@@ -36,6 +36,11 @@ const importLimiter = rateLimit({
 function createApp() {
   const app = express();
 
+  // Trust the immediate upstream proxy (nginx). Required so express-rate-limit
+  // can correctly identify clients via X-Forwarded-For. Safe because port 3001
+  // is not exposed to the host – only nginx can reach the backend.
+  app.set('trust proxy', 1);
+
   app.use(cors());
   app.use(express.json());
 

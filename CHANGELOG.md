@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.3] – 2026-04-26
+
+### Fixed
+- **express-rate-limit `ValidationError` behind nginx proxy**: added `app.set('trust proxy', 1)` to `app.js` so Express correctly reads client IPs from the `X-Forwarded-For` header set by the nginx reverse proxy. Without this, every rate-limited endpoint threw a console `ValidationError` and — depending on the express-rate-limit version — could block or misidentify requests. Port 3001 is not exposed to the host (only nginx can reach it), so trusting one proxy hop is safe.
+
+---
+
 ## [1.7.2] – 2026-04-26
 
 ### Fixed
