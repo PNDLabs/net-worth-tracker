@@ -1261,16 +1261,15 @@ describe('Precious Metals API', () => {
     expect(res.body[0].value).toBeCloseTo(300, 1);
   });
 
-  test('GET /api/metals/spot-prices - returns 502 when both primary and fallback APIs are unreachable', async () => {
-    const originalFetch = global.fetch;
-    global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
+  test('GET /api/metals/spot-prices - returns 502 when MetalPriceAPI key is not configured', async () => {
     const res = await request(app).get('/api/metals/spot-prices');
-    global.fetch = originalFetch;
     expect(res.status).toBe(502);
-    expect(res.body.error).toMatch(/spot price/i);
+    expect(res.body.error).toMatch(/MetalPriceAPI key is not configured/i);
   });
 
   test('POST /api/metals/refresh-prices - updates all metal values with mocked prices', async () => {
+    await request(app).patch('/api/settings').send({ metalPriceApiKey: 'test-key-123' });
+
     const created = await request(app).post('/api/metals').send({
       name: 'Refresh Gold',
       metal_type: 'gold',
@@ -1278,11 +1277,15 @@ describe('Precious Metals API', () => {
       quantity_grams: 10,
     });
 
-    const mockPrices = { gold: 62000 / 31.1035 }; // ~1993 USD/troy-oz → price per gram
     const originalFetch = global.fetch;
+    // MetalPriceAPI: rates.XAU = 1/62000 → price_per_gram = 62000/31.1035 ≈ 1993 USD/g
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => [{ gold: 62000, silver: 800, platinum: 30000, palladium: 40000 }],
+      json: async () => ({
+        success: true,
+        base: 'USD',
+        rates: { XAU: 1 / 62000, XAG: 1 / 800, XPT: 1 / 30000, XPD: 1 / 40000 },
+      }),
     });
 
     const res = await request(app).post('/api/metals/refresh-prices');
@@ -1296,9 +1299,11 @@ describe('Precious Metals API', () => {
     expect(metal.body.current_value).toBeGreaterThan(0);
     expect(metal.body.last_price_update).not.toBeNull();
 
-    // No defaultCurrency in fresh DB → defaults to USD, no forex call needed
     expect(res.body.currency).toBe('USD');
     expect(res.body.unit).toBe('USD_per_gram');
+
+    // Clean up
+    await request(app).patch('/api/settings').send({ metalPriceApiKey: '' });
   });
 
   test('POST /api/metals/refresh-prices - converts to user defaultCurrency (INR) via forex', async () => {

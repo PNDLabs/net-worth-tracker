@@ -12,44 +12,13 @@ const VALID_METAL_TYPES = ['gold', 'silver', 'platinum', 'palladium'];
 const VALID_METAL_FORMS = ['physical', 'digital'];
 const GRAMS_PER_TROY_OZ = 31.1035;
 
-// Spot prices always returned in USD by api.metals.live
-const SPOT_PRICE_URL = 'https://api.metals.live/v1/spot';
-// Open Exchange Rates free endpoint – used only for fiat currency conversion.
-// The free tier does NOT include precious-metal ISO codes (XAU/XAG/XPT/XPD).
-const FOREX_URL = 'https://open.er-api.com/v6/latest/USD';
-
-// CoinCap v2 rates endpoint – free, no API key required.
-// Returns an array of rate objects with { id, symbol, rateUsd, type }.
-// For precious metals: id="gold" → rateUsd is USD price per 1 troy oz.
-const COINCAP_RATES_URL = 'https://api.coincap.io/v2/rates';
-
 // MetalPriceAPI endpoint – requires an API key (free tier available at metalpriceapi.com).
 // base=CURRENCY → rates.XAU = troy_oz per 1 unit of base currency (inverse of price).
 // price_per_gram = (1 / rates.XAU) / GRAMS_PER_TROY_OZ
 const METAL_PRICE_API_URL = 'https://api.metalpriceapi.com/v1/latest';
 
-// Mapping from VALID_METAL_TYPES to CoinCap rate IDs
-const METAL_COINCAP_IDS = { gold: 'gold', silver: 'silver', platinum: 'platinum', palladium: 'palladium' };
-
 // Mapping from VALID_METAL_TYPES to MetalPriceAPI / ISO 4217 currency codes
 const METAL_ISO_CODES = { gold: 'XAU', silver: 'XAG', platinum: 'XPT', palladium: 'XPD' };
-
-/**
- * Fetch the USD → targetCurrency exchange rate from open.er-api.com.
- * Returns 1.0 immediately for USD without a network call.
- */
-async function fetchExchangeRate(targetCurrency) {
-  if (!targetCurrency || targetCurrency === 'USD') return 1.0;
-  const resp = await fetch(FOREX_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!resp.ok) throw new Error(`Exchange rate API returned ${resp.status}`);
-  const data = await resp.json();
-  const rate = data?.rates?.[targetCurrency];
-  if (!rate) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
-  return Number(rate);
-}
 
 /**
  * Read the user's defaultCurrency from local settings.
@@ -84,7 +53,7 @@ async function getMetalPriceApiKey() {
 }
 
 /**
- * Primary price source when an API key is configured: MetalPriceAPI.
+ * Fetch live spot prices from MetalPriceAPI in targetCurrency per gram.
  * rates.XAU = troy_oz per 1 unit of base currency.
  * price_per_gram = (1 / rates.XAU) / GRAMS_PER_TROY_OZ
  */
@@ -120,104 +89,15 @@ async function fetchSpotPricesFromMetalPriceApi(targetCurrency, apiKey) {
 }
 
 /**
- * Fallback price source: CoinCap v2 rates API.
- * https://api.coincap.io/v2/rates returns an array of rate objects where
- * rateUsd is the USD price per 1 troy ounce for precious metals.
- * FX conversion for non-USD currencies is handled via open.er-api.com.
- */
-async function fetchSpotPricesFromCoinCap(targetCurrency) {
-  const needsFx = targetCurrency && targetCurrency !== 'USD';
-
-  const [coinCapResp, fxResp] = await Promise.all([
-    fetch(COINCAP_RATES_URL, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    }),
-    needsFx
-      ? fetch(FOREX_URL, {
-          headers: { Accept: 'application/json' },
-          signal: AbortSignal.timeout(8000),
-        })
-      : Promise.resolve(null),
-  ]);
-
-  if (!coinCapResp.ok) throw new Error(`CoinCap API returned ${coinCapResp.status}`);
-  const coinCapData = await coinCapResp.json();
-  const ratesList = coinCapData?.data;
-  if (!Array.isArray(ratesList)) {
-    throw new Error('Unexpected response format from CoinCap API');
-  }
-
-  const metalUsdPrices = {};
-  for (const rate of ratesList) {
-    for (const [metal, id] of Object.entries(METAL_COINCAP_IDS)) {
-      if (rate.id === id) {
-        const price = parseFloat(rate.rateUsd);
-        if (price > 0) metalUsdPrices[metal] = price;
-      }
-    }
-  }
-  if (Object.keys(metalUsdPrices).length === 0) {
-    throw new Error('No precious metal rates found in CoinCap API response');
-  }
-
-  let fxRate = 1.0;
-  if (needsFx && fxResp) {
-    if (!fxResp.ok) throw new Error(`Exchange rate API returned ${fxResp.status}`);
-    const fxData = await fxResp.json();
-    fxRate = fxData?.rates?.[targetCurrency];
-    if (!fxRate) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
-  }
-
-  const result = {};
-  for (const metal of VALID_METAL_TYPES) {
-    if (metalUsdPrices[metal] != null) {
-      result[metal] = (metalUsdPrices[metal] / GRAMS_PER_TROY_OZ) * fxRate;
-    }
-  }
-  return result;
-}
-
-/**
  * Fetch live spot prices in targetCurrency per gram.
- * Priority: MetalPriceAPI (when apiKey set) → metals.live → CoinCap.
+ * Requires an API key (metalPriceApiKey setting).
+ * Returns { gold, silver, platinum, palladium } in targetCurrency per gram.
  */
 async function fetchSpotPricesPerGram(targetCurrency = 'USD', apiKey = null) {
-  // Primary (when configured): MetalPriceAPI
-  if (apiKey) {
-    try {
-      return await fetchSpotPricesFromMetalPriceApi(targetCurrency, apiKey);
-    } catch (metalPriceErr) {
-      console.warn('[metals] MetalPriceAPI failed, falling back to free sources:', metalPriceErr.message);
-    }
+  if (!apiKey) {
+    throw new Error('MetalPriceAPI key is not configured. Please add your API key in Settings.');
   }
-
-  // Free primary: api.metals.live
-  try {
-    const resp = await fetch(SPOT_PRICE_URL, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
-    const data = await resp.json();
-    const raw = Array.isArray(data) ? data[0] : data;
-    if (!raw || typeof raw !== 'object') throw new Error('Unexpected response format from spot price API');
-
-    const fxRate = await fetchExchangeRate(targetCurrency);
-    const prices = {};
-    for (const metal of VALID_METAL_TYPES) {
-      if (raw[metal] != null) prices[metal] = (Number(raw[metal]) / GRAMS_PER_TROY_OZ) * fxRate;
-    }
-    return prices;
-  } catch (primaryErr) {
-    try {
-      return await fetchSpotPricesFromCoinCap(targetCurrency);
-    } catch (fallbackErr) {
-      throw new Error(
-        `Primary (metals.live): ${primaryErr.message}; Fallback (CoinCap): ${fallbackErr.message}`
-      );
-    }
-  }
+  return fetchSpotPricesFromMetalPriceApi(targetCurrency, apiKey);
 }
 
 /**
@@ -345,8 +225,8 @@ export async function deleteMetal(id) {
 }
 
 /**
- * Fetch live spot prices (primary: api.metals.live, fallback: open.er-api.com FX rates),
- * convert to user's currency, and update all metal holdings in local SQLite.
+ * Fetch live spot prices from MetalPriceAPI, convert to user's currency,
+ * and update all metal holdings in local SQLite.
  * Returns { updated, prices, currency, unit }.
  */
 export async function refreshPrices() {
@@ -381,16 +261,11 @@ export async function refreshPrices() {
   return { updated, prices, currency, unit: `${currency}_per_gram` };
 }
 
-/**
- * Fetch live spot prices without persisting them (primary: api.metals.live, fallback: CoinCap).
- * Returns { prices, currency, unit, source }.
- */
 export async function getSpotPrices() {
   const currency = await getUserCurrency();
   const apiKey = await getMetalPriceApiKey();
   const prices = await fetchSpotPricesPerGram(currency, apiKey);
-  const source = apiKey ? METAL_PRICE_API_URL : SPOT_PRICE_URL;
-  return { prices, currency, unit: `${currency}_per_gram`, source };
+  return { prices, currency, unit: `${currency}_per_gram`, source: METAL_PRICE_API_URL };
 }
 
 export { parsePurity, GRAMS_PER_TROY_OZ };
