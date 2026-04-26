@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.5] – 2026-04-26
+
+### Fixed
+- **metals: replace broken fallback price source** — the `open.er-api.com` free tier does NOT include precious-metal ISO codes (XAU/XAG/XPT/XPD), so the fallback always produced *"No precious metal rates found in FX API response"* and the endpoint returned 502. The fallback is now **`api.coincap.io/v2/rates`** (free, no API key required) which provides gold, silver, platinum, and palladium as `rateUsd` per troy ounce. FX conversion for non-USD currencies continues to use `open.er-api.com` (fiat rates work correctly on the free tier). The same fix is applied to the Android offline `metalsService.js`.
+
+---
+
 ## [1.7.4] – 2026-04-26
 
 ### Fixed

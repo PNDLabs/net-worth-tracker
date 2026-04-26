@@ -14,12 +14,17 @@ const GRAMS_PER_TROY_OZ = 31.1035;
 
 // Spot prices always returned in USD by api.metals.live
 const SPOT_PRICE_URL = 'https://api.metals.live/v1/spot';
-// Open Exchange Rates free endpoint – no API key required.
-// Also includes precious metal codes: XAU (gold), XAG (silver), XPT (platinum), XPD (palladium).
+// Open Exchange Rates free endpoint – used only for fiat currency conversion.
+// The free tier does NOT include precious-metal ISO codes (XAU/XAG/XPT/XPD).
 const FOREX_URL = 'https://open.er-api.com/v6/latest/USD';
 
-// Mapping from VALID_METAL_TYPES to ISO 4217 precious-metal currency codes
-const METAL_FX_CODES = { gold: 'XAU', silver: 'XAG', platinum: 'XPT', palladium: 'XPD' };
+// CoinCap v2 rates endpoint – free, no API key required.
+// Returns an array of rate objects with { id, symbol, rateUsd, type }.
+// For precious metals: id="gold" → rateUsd is USD price per 1 troy oz.
+const COINCAP_RATES_URL = 'https://api.coincap.io/v2/rates';
+
+// Mapping from VALID_METAL_TYPES to CoinCap rate IDs
+const METAL_COINCAP_IDS = { gold: 'gold', silver: 'silver', platinum: 'platinum', palladium: 'palladium' };
 
 /**
  * Fetch the USD → targetCurrency exchange rate from open.er-api.com.
@@ -55,42 +60,67 @@ async function getUserCurrency() {
 }
 
 /**
- * Fallback price source: derive spot prices from open.er-api.com FX rates.
- * Precious metal ISO codes (XAU/XAG/XPT/XPD) give rates.XAU = troy_oz per 1 USD.
- * price_per_gram = targetRate / (rates.METAL_CODE × GRAMS_PER_TROY_OZ)
+ * Fallback price source: CoinCap v2 rates API.
+ * https://api.coincap.io/v2/rates returns an array of rate objects where
+ * rateUsd is the USD price per 1 troy ounce for precious metals.
+ * FX conversion for non-USD currencies is handled via open.er-api.com.
  */
-async function fetchSpotPricesFromFxApi(targetCurrency) {
-  const resp = await fetch(FOREX_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!resp.ok) throw new Error(`FX rate API returned ${resp.status}`);
-  const data = await resp.json();
-  const rates = data?.rates;
-  if (!rates || typeof rates !== 'object') {
-    throw new Error('Unexpected response format from FX rate API');
+async function fetchSpotPricesFromCoinCap(targetCurrency) {
+  const needsFx = targetCurrency && targetCurrency !== 'USD';
+
+  const [coinCapResp, fxResp] = await Promise.all([
+    fetch(COINCAP_RATES_URL, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    }),
+    needsFx
+      ? fetch(FOREX_URL, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(8000),
+        })
+      : Promise.resolve(null),
+  ]);
+
+  if (!coinCapResp.ok) throw new Error(`CoinCap API returned ${coinCapResp.status}`);
+  const coinCapData = await coinCapResp.json();
+  const ratesList = coinCapData?.data;
+  if (!Array.isArray(ratesList)) {
+    throw new Error('Unexpected response format from CoinCap API');
   }
 
-  const targetRate = (!targetCurrency || targetCurrency === 'USD') ? 1.0 : rates[targetCurrency];
-  if (targetRate == null) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
+  const metalUsdPrices = {};
+  for (const rate of ratesList) {
+    for (const [metal, id] of Object.entries(METAL_COINCAP_IDS)) {
+      if (rate.id === id) {
+        const price = parseFloat(rate.rateUsd);
+        if (price > 0) metalUsdPrices[metal] = price;
+      }
+    }
+  }
+  if (Object.keys(metalUsdPrices).length === 0) {
+    throw new Error('No precious metal rates found in CoinCap API response');
+  }
+
+  let fxRate = 1.0;
+  if (needsFx && fxResp) {
+    if (!fxResp.ok) throw new Error(`Exchange rate API returned ${fxResp.status}`);
+    const fxData = await fxResp.json();
+    fxRate = fxData?.rates?.[targetCurrency];
+    if (!fxRate) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
+  }
 
   const result = {};
   for (const metal of VALID_METAL_TYPES) {
-    const xCode = METAL_FX_CODES[metal];
-    const xRate = rates[xCode]; // troy oz per 1 USD
-    if (xRate && xRate > 0) {
-      result[metal] = targetRate / (xRate * GRAMS_PER_TROY_OZ);
+    if (metalUsdPrices[metal] != null) {
+      result[metal] = (metalUsdPrices[metal] / GRAMS_PER_TROY_OZ) * fxRate;
     }
-  }
-  if (Object.keys(result).length === 0) {
-    throw new Error('No precious metal rates (XAU/XAG/XPT/XPD) found in FX API response');
   }
   return result;
 }
 
 /**
  * Fetch live spot prices in targetCurrency per gram.
- * Primary: api.metals.live.  Fallback: open.er-api.com FX rates (XAU/XAG/XPT/XPD).
+ * Primary: api.metals.live.  Fallback: api.coincap.io/v2/rates (free, no key).
  */
 async function fetchSpotPricesPerGram(targetCurrency = 'USD') {
   try {
@@ -111,10 +141,10 @@ async function fetchSpotPricesPerGram(targetCurrency = 'USD') {
     return prices;
   } catch (primaryErr) {
     try {
-      return await fetchSpotPricesFromFxApi(targetCurrency);
+      return await fetchSpotPricesFromCoinCap(targetCurrency);
     } catch (fallbackErr) {
       throw new Error(
-        `Primary (metals.live): ${primaryErr.message}; Fallback (FX rates): ${fallbackErr.message}`
+        `Primary (metals.live): ${primaryErr.message}; Fallback (CoinCap): ${fallbackErr.message}`
       );
     }
   }
@@ -281,7 +311,7 @@ export async function refreshPrices() {
 }
 
 /**
- * Fetch live spot prices without persisting them (primary: api.metals.live, fallback: FX rates).
+ * Fetch live spot prices without persisting them (primary: api.metals.live, fallback: CoinCap).
  * Returns { prices, currency, unit, source }.
  */
 export async function getSpotPrices() {

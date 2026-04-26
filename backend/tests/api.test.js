@@ -1350,9 +1350,9 @@ describe('Precious Metals API', () => {
     }
   });
 
-  test('POST /api/metals/refresh-prices - falls back to FX API when metals.live is unreachable', async () => {
+  test('POST /api/metals/refresh-prices - falls back to CoinCap API when metals.live is unreachable', async () => {
     const created = await request(app).post('/api/metals').send({
-      name: 'FX Fallback Gold',
+      name: 'CoinCap Fallback Gold',
       metal_type: 'gold',
       purity: '24k',
       quantity_grams: 10,
@@ -1362,16 +1362,16 @@ describe('Precious Metals API', () => {
     global.fetch = jest.fn()
       // metals.live fails
       .mockRejectedValueOnce(new Error('Connection refused'))
-      // FX API returns metal XAU rate: 1/3110.35 troy_oz_per_USD → gold = $3110.35/oz
+      // CoinCap returns rates array with rateUsd per troy oz in USD
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          rates: {
-            XAU: 1 / 3110.35,
-            XAG: 1 / 31.1035,
-            XPT: 1 / 1000,
-            XPD: 1 / 1200,
-          },
+          data: [
+            { id: 'gold',      symbol: 'XAU', rateUsd: '3110.35', type: 'fiat' },
+            { id: 'silver',    symbol: 'XAG', rateUsd: '31.1035', type: 'fiat' },
+            { id: 'platinum',  symbol: 'XPT', rateUsd: '1000',    type: 'fiat' },
+            { id: 'palladium', symbol: 'XPD', rateUsd: '1200',    type: 'fiat' },
+          ],
         }),
       });
 
@@ -1380,7 +1380,7 @@ describe('Precious Metals API', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.currency).toBe('USD');
-    // gold: 1 / (1/3110.35 × 31.1035) = 3110.35/31.1035 = 100 USD/gram
+    // gold: 3110.35 USD/troy-oz / 31.1035 g/oz = 100 USD/gram
     expect(res.body.prices.gold).toBeCloseTo(100, 0);
     const metal = await request(app).get(`/api/metals/${created.body.id}`);
     // 10g × 1.0 (24k) × 100 USD/gram = 1000
