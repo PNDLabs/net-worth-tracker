@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.6] – 2026-04-26
+
+### Added
+- **MetalPriceAPI integration** — users can now enter a [metalpriceapi.com](https://metalpriceapi.com) API key in Settings to fetch precious metal spot prices directly in their local currency (e.g. `base=INR&currencies=XAU,XAG,XPT,XPD`). This eliminates the need for a separate FX conversion step and is more reliable than the free fallback APIs.
+  - `rates.XAU` in the response = troy oz per 1 unit of base currency; `price_per_gram = 1 / (rates.XAU × 31.1035)`.
+  - Setting key: `metalPriceApiKey` (stored in the `settings` table / local SQLite).
+  - Price source priority: MetalPriceAPI (when key set) → api.metals.live → api.coincap.io/v2/rates.
+- **Metal Price API Key card in Settings page** (visible on both web and Android) — password input with show/hide toggle, save, and clear buttons.
+
+---
+
 ## [1.7.5] – 2026-04-26
 
 ### Fixed

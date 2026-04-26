@@ -1386,4 +1386,47 @@ describe('Precious Metals API', () => {
     // 10g × 1.0 (24k) × 100 USD/gram = 1000
     expect(metal.body.current_value).toBeCloseTo(1000, 0);
   });
+
+  test('POST /api/metals/refresh-prices - uses MetalPriceAPI when metalPriceApiKey is set in settings', async () => {
+    // Store the API key in settings
+    await request(app).patch('/api/settings').send({ metalPriceApiKey: 'test-key-123' });
+
+    const created = await request(app).post('/api/metals').send({
+      name: 'MetalPriceAPI Gold',
+      metal_type: 'gold',
+      purity: '24k',
+      quantity_grams: 10,
+    });
+
+    const originalFetch = global.fetch;
+    // MetalPriceAPI with base=USD returns rates.XAU = 1/3110.35 (troy oz per USD)
+    // price_per_gram = 1 / (rates.XAU × 31.1035) = 3110.35 / 31.1035 = 100 USD/g
+    global.fetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        success: true,
+        base: 'USD',
+        rates: {
+          XAU: 1 / 3110.35,
+          XAG: 1 / 31.1035,
+          XPT: 1 / 1000,
+          XPD: 1 / 1200,
+        },
+      }),
+    });
+
+    const res = await request(app).post('/api/metals/refresh-prices');
+    global.fetch = originalFetch;
+
+    expect(res.status).toBe(200);
+    expect(res.body.currency).toBe('USD');
+    // gold: 1 / (1/3110.35 × 31.1035) = 100 USD/gram
+    expect(res.body.prices.gold).toBeCloseTo(100, 0);
+    const metal = await request(app).get(`/api/metals/${created.body.id}`);
+    // 10g × 1.0 (24k) × 100 = 1000
+    expect(metal.body.current_value).toBeCloseTo(1000, 0);
+
+    // Clean up
+    await request(app).patch('/api/settings').send({ metalPriceApiKey: '' });
+  });
 });
