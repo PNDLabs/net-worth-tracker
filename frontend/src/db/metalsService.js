@@ -14,27 +14,12 @@ const GRAMS_PER_TROY_OZ = 31.1035;
 
 // Spot prices always returned in USD by api.metals.live
 const SPOT_PRICE_URL = 'https://api.metals.live/v1/spot';
-// Open Exchange Rates free endpoint – no API key required
+// Open Exchange Rates free endpoint – no API key required.
+// Also includes precious metal codes: XAU (gold), XAG (silver), XPT (platinum), XPD (palladium).
 const FOREX_URL = 'https://open.er-api.com/v6/latest/USD';
 
-/**
- * Parse a purity string and return a fraction (0–1).
- * Mirrors the parsePurity() function in backend/src/routes/metals.js.
- */
-function parsePurity(purity) {
-  if (!purity) return 1.0;
-  const s = String(purity).trim().toLowerCase();
-  const karatMatch = s.match(/^(\d+(\.\d+)?)k$/);
-  if (karatMatch) return Math.min(parseFloat(karatMatch[1]) / 24, 1.0);
-  const pctMatch = s.match(/^(\d+(\.\d+)?)%$/);
-  if (pctMatch) return Math.min(parseFloat(pctMatch[1]) / 100, 1.0);
-  const num = parseFloat(s);
-  if (!isNaN(num)) {
-    if (num > 1) return Math.min(num / 1000, 1.0);
-    return Math.min(num, 1.0);
-  }
-  return 1.0;
-}
+// Mapping from VALID_METAL_TYPES to ISO 4217 precious-metal currency codes
+const METAL_FX_CODES = { gold: 'XAU', silver: 'XAG', platinum: 'XPT', palladium: 'XPD' };
 
 /**
  * Fetch the USD → targetCurrency exchange rate from open.er-api.com.
@@ -67,6 +52,91 @@ async function getUserCurrency() {
   } catch {
     return 'USD';
   }
+}
+
+/**
+ * Fallback price source: derive spot prices from open.er-api.com FX rates.
+ * Precious metal ISO codes (XAU/XAG/XPT/XPD) give rates.XAU = troy_oz per 1 USD.
+ * price_per_gram = targetRate / (rates.METAL_CODE × GRAMS_PER_TROY_OZ)
+ */
+async function fetchSpotPricesFromFxApi(targetCurrency) {
+  const resp = await fetch(FOREX_URL, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!resp.ok) throw new Error(`FX rate API returned ${resp.status}`);
+  const data = await resp.json();
+  const rates = data?.rates;
+  if (!rates || typeof rates !== 'object') {
+    throw new Error('Unexpected response format from FX rate API');
+  }
+
+  const targetRate = (!targetCurrency || targetCurrency === 'USD') ? 1.0 : rates[targetCurrency];
+  if (targetRate == null) throw new Error(`No exchange rate found for currency: ${targetCurrency}`);
+
+  const result = {};
+  for (const metal of VALID_METAL_TYPES) {
+    const xCode = METAL_FX_CODES[metal];
+    const xRate = rates[xCode]; // troy oz per 1 USD
+    if (xRate && xRate > 0) {
+      result[metal] = targetRate / (xRate * GRAMS_PER_TROY_OZ);
+    }
+  }
+  if (Object.keys(result).length === 0) {
+    throw new Error('No precious metal rates (XAU/XAG/XPT/XPD) found in FX API response');
+  }
+  return result;
+}
+
+/**
+ * Fetch live spot prices in targetCurrency per gram.
+ * Primary: api.metals.live.  Fallback: open.er-api.com FX rates (XAU/XAG/XPT/XPD).
+ */
+async function fetchSpotPricesPerGram(targetCurrency = 'USD') {
+  try {
+    const resp = await fetch(SPOT_PRICE_URL, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
+    const data = await resp.json();
+    const raw = Array.isArray(data) ? data[0] : data;
+    if (!raw || typeof raw !== 'object') throw new Error('Unexpected response format from spot price API');
+
+    const fxRate = await fetchExchangeRate(targetCurrency);
+    const prices = {};
+    for (const metal of VALID_METAL_TYPES) {
+      if (raw[metal] != null) prices[metal] = (Number(raw[metal]) / GRAMS_PER_TROY_OZ) * fxRate;
+    }
+    return prices;
+  } catch (primaryErr) {
+    try {
+      return await fetchSpotPricesFromFxApi(targetCurrency);
+    } catch (fallbackErr) {
+      throw new Error(
+        `Primary (metals.live): ${primaryErr.message}; Fallback (FX rates): ${fallbackErr.message}`
+      );
+    }
+  }
+}
+
+/**
+ * Parse a purity string and return a fraction (0–1).
+ * Mirrors the parsePurity() function in backend/src/routes/metals.js.
+ */
+function parsePurity(purity) {
+  if (!purity) return 1.0;
+  const s = String(purity).trim().toLowerCase();
+  const karatMatch = s.match(/^(\d+(\.\d+)?)k$/);
+  if (karatMatch) return Math.min(parseFloat(karatMatch[1]) / 24, 1.0);
+  const pctMatch = s.match(/^(\d+(\.\d+)?)%$/);
+  if (pctMatch) return Math.min(parseFloat(pctMatch[1]) / 100, 1.0);
+  const num = parseFloat(s);
+  if (!isNaN(num)) {
+    if (num > 1) return Math.min(num / 1000, 1.0);
+    return Math.min(num, 1.0);
+  }
+  return 1.0;
 }
 
 export async function getMetals() {
@@ -175,28 +245,13 @@ export async function deleteMetal(id) {
 }
 
 /**
- * Fetch live spot prices from api.metals.live, convert to user's currency,
- * and update all metal holdings in local SQLite.
+ * Fetch live spot prices (primary: api.metals.live, fallback: open.er-api.com FX rates),
+ * convert to user's currency, and update all metal holdings in local SQLite.
  * Returns { updated, prices, currency, unit }.
  */
 export async function refreshPrices() {
   const currency = await getUserCurrency();
-
-  const resp = await fetch(SPOT_PRICE_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
-  const data = await resp.json();
-  const raw = Array.isArray(data) ? data[0] : data;
-  if (!raw || typeof raw !== 'object') throw new Error('Unexpected response format from spot price API');
-
-  // Convert USD/troy-oz → user currency/gram
-  const fxRate = await fetchExchangeRate(currency);
-  const prices = {};
-  for (const metal of VALID_METAL_TYPES) {
-    if (raw[metal] != null) prices[metal] = (Number(raw[metal]) / GRAMS_PER_TROY_OZ) * fxRate;
-  }
+  const prices = await fetchSpotPricesPerGram(currency);
 
   const metals = await getMetals();
   const now = new Date().toISOString();
@@ -226,26 +281,12 @@ export async function refreshPrices() {
 }
 
 /**
- * Fetch live spot prices without persisting them.
+ * Fetch live spot prices without persisting them (primary: api.metals.live, fallback: FX rates).
  * Returns { prices, currency, unit, source }.
  */
 export async function getSpotPrices() {
   const currency = await getUserCurrency();
-
-  const resp = await fetch(SPOT_PRICE_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!resp.ok) throw new Error(`Spot price API returned ${resp.status}`);
-  const data = await resp.json();
-  const raw = Array.isArray(data) ? data[0] : data;
-  if (!raw || typeof raw !== 'object') throw new Error('Unexpected response format from spot price API');
-
-  const fxRate = await fetchExchangeRate(currency);
-  const prices = {};
-  for (const metal of VALID_METAL_TYPES) {
-    if (raw[metal] != null) prices[metal] = (Number(raw[metal]) / GRAMS_PER_TROY_OZ) * fxRate;
-  }
+  const prices = await fetchSpotPricesPerGram(currency);
   return { prices, currency, unit: `${currency}_per_gram`, source: SPOT_PRICE_URL };
 }
 

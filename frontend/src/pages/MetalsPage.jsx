@@ -171,7 +171,7 @@ export default function MetalsPage() {
           <div className="icon">🥇</div>
           <p>No precious metals yet. Add gold, silver, platinum, or palladium holdings.</p>
           <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            Live spot prices are sourced from api.metals.live (USD/gram). Use <strong>Refresh Prices</strong> to update values.
+            Live spot prices are sourced from api.metals.live (converted to {currency}/gram). Use <strong>Refresh Prices</strong> to update values.
           </p>
         </div>
       ) : (

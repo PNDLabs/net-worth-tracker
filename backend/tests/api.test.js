@@ -1261,7 +1261,7 @@ describe('Precious Metals API', () => {
     expect(res.body[0].value).toBeCloseTo(300, 1);
   });
 
-  test('GET /api/metals/spot-prices - returns 502 when external API unreachable (mocked)', async () => {
+  test('GET /api/metals/spot-prices - returns 502 when both primary and fallback APIs are unreachable', async () => {
     const originalFetch = global.fetch;
     global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
     const res = await request(app).get('/api/metals/spot-prices');
@@ -1348,5 +1348,42 @@ describe('Precious Metals API', () => {
       expect(res.body.currency).toBeDefined();
       expect(res.body.unit).toMatch(/_per_gram$/);
     }
+  });
+
+  test('POST /api/metals/refresh-prices - falls back to FX API when metals.live is unreachable', async () => {
+    const created = await request(app).post('/api/metals').send({
+      name: 'FX Fallback Gold',
+      metal_type: 'gold',
+      purity: '24k',
+      quantity_grams: 10,
+    });
+
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn()
+      // metals.live fails
+      .mockRejectedValueOnce(new Error('Connection refused'))
+      // FX API returns metal XAU rate: 1/3110.35 troy_oz_per_USD → gold = $3110.35/oz
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          rates: {
+            XAU: 1 / 3110.35,
+            XAG: 1 / 31.1035,
+            XPT: 1 / 1000,
+            XPD: 1 / 1200,
+          },
+        }),
+      });
+
+    const res = await request(app).post('/api/metals/refresh-prices');
+    global.fetch = originalFetch;
+
+    expect(res.status).toBe(200);
+    expect(res.body.currency).toBe('USD');
+    // gold: 1 / (1/3110.35 × 31.1035) = 3110.35/31.1035 = 100 USD/gram
+    expect(res.body.prices.gold).toBeCloseTo(100, 0);
+    const metal = await request(app).get(`/api/metals/${created.body.id}`);
+    // 10g × 1.0 (24k) × 100 USD/gram = 1000
+    expect(metal.body.current_value).toBeCloseTo(1000, 0);
   });
 });

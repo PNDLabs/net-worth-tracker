@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.2] – 2026-04-26
+
+### Fixed
+- **Precious metals price fetch now has a reliable fallback**: when `api.metals.live` is unreachable (network failure, server down, Docker container outbound restriction), both the backend and the Android app automatically fall back to deriving spot prices from `open.er-api.com` FX rates using the standard ISO 4217 precious-metal codes — XAU (gold), XAG (silver), XPT (platinum), XPD (palladium). A single fallback API call supplies both the metal prices and the FX conversion in one request. If both sources fail, a descriptive 502 error is returned indicating which source failed and why.
+- Hardcoded `(USD/gram)` text in the Metals page empty-state hint replaced with the user's active currency (e.g. `(INR/gram)`).
+
+---
+
 ## [1.7.1] – 2026-04-25
 
 ### Changed
