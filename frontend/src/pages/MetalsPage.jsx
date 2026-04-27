@@ -139,7 +139,7 @@ export default function MetalsPage() {
             className="btn-ghost"
             onClick={handleRefreshPrices}
             disabled={refreshing}
-            title="Fetch live spot prices from api.metals.live and update holdings"
+            title="Fetch live spot prices from api.metalpriceapi.com and update holdings"
           >
             {refreshing ? '⏳ Refreshing…' : '🔄 Refresh Prices'}
           </button>
@@ -171,7 +171,7 @@ export default function MetalsPage() {
           <div className="icon">🥇</div>
           <p>No precious metals yet. Add gold, silver, platinum, or palladium holdings.</p>
           <p style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            Live spot prices are sourced from api.metals.live (converted to {currency}/gram). Use <strong>Refresh Prices</strong> to update values.
+            Live spot prices are sourced from api.metalpriceapi.com (in {currency}/gram). Use <strong>Refresh Prices</strong> to update values.
           </p>
         </div>
       ) : (
@@ -280,7 +280,7 @@ export default function MetalsPage() {
           </div>
 
           <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)', padding: '0 4px' }}>
-            ℹ️ Spot prices from api.metals.live (converted to {currency}). Values are calculated as: qty × purity × price/g.
+            ℹ️ Spot prices from api.metalpriceapi.com (in {currency}/gram). Values are calculated as: qty × purity × price/g.
           </div>
         </div>
       )}
