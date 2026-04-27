@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.7] – 2026-04-27
+
+### Changed
+- **Remove dead code for old metals price APIs** — the `api.metals.live` and `api.coincap.io/v2/rates` fallback paths (and related FX conversion via `open.er-api.com`) have been fully removed. MetalPriceAPI (`api.metalpriceapi.com`) is now the sole price source, as it was already the primary source since 1.7.6. A configured `metalPriceApiKey` is required to refresh spot prices.
+- Updated UI text in MetalsPage (button tooltip, empty-state hint, table footer) to reference `api.metalpriceapi.com` instead of the old `api.metals.live`.
+- Removed stale backend test that verified the CoinCap fallback behaviour; updated the INR currency test to mock MetalPriceAPI directly (single call, `base=INR`).
+
+---
+
 ## [1.7.6] – 2026-04-26
 
 ### Added
