@@ -91,10 +91,10 @@ export default function AssetsPage() {
                     <>
                       <tr key={a.id}>
                         <td><strong>{a.name}</strong>{a.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.notes}</div>}</td>
-                         <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
-                         <td className="hide-mobile">{formatDate(a.acquisition_date)}</td>
-                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
-                         <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
+                        <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
+                        <td className="hide-mobile">{formatDate(a.acquisition_date)}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
+                        <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
                         <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
                           {gl != null ? `${gl >= 0 ? '+' : ''}${fmt(gl)}` : '—'}
                         </td>

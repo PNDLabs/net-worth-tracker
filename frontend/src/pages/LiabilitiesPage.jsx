@@ -103,13 +103,13 @@ export default function LiabilitiesPage() {
                     <>
                       <tr key={l.id}>
                         <td><strong>{l.name}</strong>{l.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{l.notes}</div>}</td>
-                         <td className="hide-mobile">{l.lender || '—'}</td>
-                         <td><span className={`badge badge-${l.type}`}>{typeLabel(l.type)}</span></td>
-                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
-                         <td style={{ textAlign: 'right' }} className="amount negative">{fmt(l.current_balance)}</td>
-                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
-                         <td style={{ textAlign: 'right' }}>{l.minimum_payment != null ? fmt(l.minimum_payment) : '—'}</td>
-                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{pct != null ? `${pct.toFixed(1)}%` : '—'}</td>
+                        <td className="hide-mobile">{l.lender || '—'}</td>
+                        <td><span className={`badge badge-${l.type}`}>{typeLabel(l.type)}</span></td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
+                        <td style={{ textAlign: 'right' }} className="amount negative">{fmt(l.current_balance)}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
+                        <td style={{ textAlign: 'right' }}>{l.minimum_payment != null ? fmt(l.minimum_payment) : '—'}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{pct != null ? `${pct.toFixed(1)}%` : '—'}</td>
                         <td>
                           <div className="flex-gap">
                             <button className="btn-ghost btn-sm" onClick={() => openEdit(l)}>Edit</button>

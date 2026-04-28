@@ -283,9 +283,9 @@ export default function InsurancePage() {
                         )}
                       </td>
                       <td className="hide-mobile">{p.insured_name || '—'}</td>
-                       <td className="hide-mobile">{p.provider || '—'}</td>
-                       <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
-                       <td className="hide-mobile" style={{ fontSize: 12 }}>{p.policy_number || '—'}</td>
+                      <td className="hide-mobile">{p.provider || '—'}</td>
+                      <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
+                      <td className="hide-mobile" style={{ fontSize: 12 }}>{p.policy_number || '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         {p.premium_amount != null ? (
                           <>
