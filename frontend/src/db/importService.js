@@ -59,12 +59,12 @@ async function isDuplicateRecord(importType, row) {
 
 /**
  * Check which records (by index) are duplicates in the local SQLite DB.
- * Returns { duplicates: [index, ...] }.  SIP installments are never flagged.
+ * Returns { duplicates: [index, ...] }.
  */
 export async function checkDuplicates(importType, records) {
   const duplicates = [];
   for (let i = 0; i < records.length; i++) {
-    if (importType !== 'sip' && await isDuplicateRecord(importType, records[i])) {
+    if (await isDuplicateRecord(importType, records[i])) {
       duplicates.push(i);
     }
   }
@@ -116,17 +116,6 @@ async function insertRow(importType, row, defaultCurrency = null) {
        terms ? String(terms) : null, covJson,
        insured_name ? String(insured_name) : null]
     );
-  } else if (importType === 'sip') {
-    const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
-    if (!name) throw new Error('name is required');
-    if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
-    await run(
-      `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [String(name), symbol ? String(symbol) : null, account_id ? Number(account_id) : null,
-       Number(amount), units != null ? Number(units) : null, nav != null ? Number(nav) : null,
-       installment_date ? String(installment_date) : today(), notes ? String(notes) : null]
-    );
   } else {
     throw new Error(`Unknown import type: ${importType}`);
   }
@@ -136,7 +125,7 @@ async function insertRow(importType, row, defaultCurrency = null) {
 
 /**
  * Import an array of pre-parsed records directly into SQLite.
- * Skips duplicates (for everything except SIP which allows duplicates).
+ * Skips duplicates.
  * Records with _forceImport: true bypass the duplicate check.
  */
 export async function importRecords(importType, records) {
@@ -145,7 +134,7 @@ export async function importRecords(importType, records) {
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
-      const isDup = importType !== 'sip' && !row._forceImport && await isDuplicateRecord(importType, row);
+      const isDup = !row._forceImport && await isDuplicateRecord(importType, row);
       if (isDup) { results.skipped++; results.duplicates++; continue; }
       await insertRow(importType, row, defaultCurrency);
       results.imported++;
@@ -178,7 +167,7 @@ export async function importCsv(importType, file) {
  * Preview a CSV file using AI to map arbitrary column headers to the target schema.
  * Falls back to basic key normalization when AI is unavailable.
  *
- * @param {string} importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {string} importType  – 'accounts'|'assets'|'liabilities'|'insurance'
  * @param {File}   file        – CSV File object
  * @param {object} [aiOptions] – { apiKey, apiUrl, model } from aiSettings.js
  * @returns {Promise<{ import_type, records, method, validation_notes }>}

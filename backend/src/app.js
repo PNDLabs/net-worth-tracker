@@ -11,7 +11,6 @@ const exportRouter = require('./routes/exportRoutes');
 const insuranceRouter = require('./routes/insurance');
 const settingsRouter = require('./routes/settings');
 const valueHistoryRouter = require('./routes/valueHistory');
-const sipRouter = require('./routes/sip');
 const metalsRouter = require('./routes/metals');
 const db = require('./db/database');
 
@@ -51,7 +50,6 @@ function createApp() {
   app.use('/api/insurance', apiLimiter, insuranceRouter);
   app.use('/api/settings', apiLimiter, settingsRouter);
   app.use('/api/value-history', apiLimiter, valueHistoryRouter);
-  app.use('/api/sip', apiLimiter, sipRouter);
   app.use('/api/metals', apiLimiter, metalsRouter);
   app.use('/api/import', importLimiter, importRouter);
   app.use('/api/export', apiLimiter, exportRouter);

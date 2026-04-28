@@ -13,7 +13,7 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-const APP_VERSION           = '1.7.7';
+const APP_VERSION           = '1.7.8';
 const EXPORT_SCHEMA_VERSION = 3;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -43,7 +43,6 @@ router.get('/', (req, res) => {
         assets:           conn.prepare('SELECT * FROM assets ORDER BY id').all(),
         liabilities:      conn.prepare('SELECT * FROM liabilities ORDER BY id').all(),
         insurance_plans:  conn.prepare('SELECT * FROM insurance_plans ORDER BY id').all(),
-        sip_installments: conn.prepare('SELECT * FROM sip_installments ORDER BY id').all(),
         precious_metals:  conn.prepare('SELECT * FROM precious_metals ORDER BY id').all(),
         value_history:    conn.prepare('SELECT * FROM value_history ORDER BY id').all(),
         settings:         parseSettings(conn.prepare('SELECT key, value FROM settings').all()),
@@ -91,7 +90,6 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
     assets:           { imported: 0, skipped: 0 },
     liabilities:      { imported: 0, skipped: 0 },
     insurance_plans:  { imported: 0, skipped: 0 },
-    sip_installments: { imported: 0, skipped: 0 },
     precious_metals:  { imported: 0, skipped: 0 },
     value_history:    { imported: 0, skipped: 0 },
     settings:         { imported: 0, skipped: 0 },
@@ -280,27 +278,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
       stats.holdings.imported++;
     }
 
-    // ── 7. SIP installments ──────────────────────────────────────────────────
-    const insertSip = conn.prepare(
-      `INSERT INTO sip_installments
-         (name, symbol, account_id, amount, units, nav, installment_date, notes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    for (const row of (data.sip_installments || [])) {
-      const newAccountId = row.account_id != null ? (accountIdMap[row.account_id] ?? null) : null;
-      insertSip.run(
-        String(row.name), row.symbol ? String(row.symbol) : null,
-        newAccountId, Number(row.amount),
-        row.units != null ? Number(row.units) : null,
-        row.nav != null ? Number(row.nav) : null,
-        row.installment_date ? String(row.installment_date) : new Date().toISOString().slice(0, 10),
-        row.notes ? String(row.notes) : null,
-        row.created_at || null
-      );
-      stats.sip_installments.imported++;
-    }
-
-    // ── 8. Precious metals ───────────────────────────────────────────────────
+    // ── 7. Precious metals ───────────────────────────────────────────────────
     const findMetal = conn.prepare(
       `SELECT id FROM precious_metals WHERE lower(name)=lower(?) AND lower(metal_type)=lower(?)`
     );
@@ -335,7 +313,7 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
       stats.precious_metals.imported++;
     }
 
-    // ── 9. Value history ─────────────────────────────────────────────────────
+    // ── 8. Value history ─────────────────────────────────────────────────────
     const insertHistory = conn.prepare(
       `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`

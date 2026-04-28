@@ -4,7 +4,7 @@
  * Export produces a versioned JSON payload containing every table.
  * Import reads that payload, validates the schema version, and merges the
  * records into the local database while remapping primary-key IDs so that
- * foreign-key relationships (holdings → accounts, sip → accounts,
+ * foreign-key relationships (holdings → accounts,
  * value_history → any entity) are preserved even when the target database
  * already contains rows and auto-increment IDs differ.
  *
@@ -14,7 +14,6 @@
  *   • liabilities – name + lender       (same)
  *   • insurance   – name + provider     (same)
  *   • holdings    – symbol + account_id (skip duplicate)
- *   • sip         – always insert       (no natural unique key)
  *   • value_history – only import for   newly created entities to avoid
  *                     doubling history on entities that already existed
  *   • settings    – always upsert
@@ -32,7 +31,6 @@ export async function exportAllData() {
     assets,
     liabilities,
     insurance_plans,
-    sip_installments,
     precious_metals,
     value_history,
     settingsRows,
@@ -42,7 +40,6 @@ export async function exportAllData() {
     query('SELECT * FROM assets ORDER BY id'),
     query('SELECT * FROM liabilities ORDER BY id'),
     query('SELECT * FROM insurance_plans ORDER BY id'),
-    query('SELECT * FROM sip_installments ORDER BY id'),
     query('SELECT * FROM precious_metals ORDER BY id'),
     query('SELECT * FROM value_history ORDER BY id'),
     query('SELECT key, value FROM settings'),
@@ -65,7 +62,6 @@ export async function exportAllData() {
       assets,
       liabilities,
       insurance_plans,
-      sip_installments,
       precious_metals,
       value_history,
       settings,
@@ -108,7 +104,6 @@ export async function importAllData(payload) {
     assets:          { imported: 0, skipped: 0 },
     liabilities:     { imported: 0, skipped: 0 },
     insurance_plans: { imported: 0, skipped: 0 },
-    sip_installments: { imported: 0, skipped: 0 },
     precious_metals: { imported: 0, skipped: 0 },
     value_history:   { imported: 0, skipped: 0 },
     settings:        { imported: 0, skipped: 0 },
@@ -302,28 +297,7 @@ export async function importAllData(payload) {
     stats.holdings.imported++;
   }
 
-  // ── 7. SIP installments ───────────────────────────────────────────────────
-  for (const row of (data.sip_installments || [])) {
-    const newAccountId = row.account_id != null ? (accountIdMap[row.account_id] ?? null) : null;
-    await run(
-      `INSERT INTO sip_installments
-         (name, symbol, account_id, amount, units, nav, installment_date, notes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        String(row.name), row.symbol ? String(row.symbol) : null,
-        newAccountId,
-        Number(row.amount),
-        row.units != null ? Number(row.units) : null,
-        row.nav != null ? Number(row.nav) : null,
-        row.installment_date ? String(row.installment_date) : new Date().toISOString().slice(0, 10),
-        row.notes ? String(row.notes) : null,
-        row.created_at || null,
-      ]
-    );
-    stats.sip_installments.imported++;
-  }
-
-  // ── 8. Precious metals ────────────────────────────────────────────────────
+  // ── 7. Precious metals ────────────────────────────────────────────────────
   for (const row of (data.precious_metals || [])) {
     const existing = await query(
       `SELECT id FROM precious_metals WHERE lower(name)=lower(?) AND lower(metal_type)=lower(?)`,
@@ -358,7 +332,7 @@ export async function importAllData(payload) {
     stats.precious_metals.imported++;
   }
 
-  // ── 9. Value history ──────────────────────────────────────────────────────
+  // ── 8. Value history ──────────────────────────────────────────────────────
   // Only import history for entities that were newly created in this import
   // run to avoid duplicating history on entities that already existed.
   const entityNewSets = {
