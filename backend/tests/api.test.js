@@ -239,19 +239,6 @@ describe('Net Worth API', () => {
     expect(res.body.netWorth).toBe(25000);
   });
 
-  test('GET /api/networth - SIP installments are NOT included in totalAssets (tracked separately in SIP page)', async () => {
-    await request(app).post('/api/accounts').send({ name: 'Bank', type: 'checking', balance: 10000 });
-    await request(app).post('/api/sip').send({ name: 'NIFTY SIP Jan', symbol: 'NIFTYBEES', amount: 5000 });
-    await request(app).post('/api/sip').send({ name: 'NIFTY SIP Feb', symbol: 'NIFTYBEES', amount: 3000 });
-
-    const res = await request(app).get('/api/networth');
-    expect(res.status).toBe(200);
-    // sipTotal is no longer part of net worth to avoid double-counting with account balances
-    expect(res.body.sipTotal).toBeUndefined();
-    expect(res.body.totalAssets).toBe(10000);
-    expect(res.body.netWorth).toBe(10000);
-  });
-
   test('POST /api/networth/snapshots - creates a snapshot', async () => {
     await request(app).post('/api/accounts').send({ name: 'Bank', type: 'savings', balance: 50000 });
     const res = await request(app).post('/api/networth/snapshots').send({ notes: 'Monthly check' });
@@ -616,63 +603,6 @@ describe('PDF Import API', () => {
     const res = await request(app).post('/api/import/pdf');
     expect(res.status).toBe(400);
   });
-
-  test('POST /api/import/pdf/preview - parses SIP statement PDF', async () => {
-    // Keep text short so it fits the single-line test PDF helper (~90 chars max)
-    const pdfBuf = makePdf('Folio No: 12345  Amount: 5000  Units: 26.286  NAV: 190.25  SIP Purchase');
-    const res = await request(app)
-      .post('/api/import/pdf/preview')
-      .attach('file', pdfBuf, { filename: 'sip.pdf', contentType: 'application/pdf' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.import_type).toBe('sip');
-    expect(Array.isArray(res.body.records)).toBe(true);
-    expect(res.body.records.length).toBeGreaterThan(0);
-    expect(res.body.records[0].amount).toBeCloseTo(5000, 0);
-    expect(res.body.records[0].units).toBeCloseTo(26.286, 2);
-    expect(res.body.records[0].nav).toBeCloseTo(190.25, 1);
-    expect(res.body.method).toBe('pattern');
-    expect(Array.isArray(res.body.validation_notes)).toBe(true);
-  });
-
-  test('POST /api/import/pdf - imports SIP from PDF into DB', async () => {
-    const pdfBuf = makePdf('Folio No: 12345  Amount: 5000  Units: 26.286  NAV: 190.25  SIP Purchase');
-    const res = await request(app)
-      .post('/api/import/pdf')
-      .attach('file', pdfBuf, { filename: 'sip.pdf', contentType: 'application/pdf' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.imported).toBeGreaterThan(0);
-
-    const list = await request(app).get('/api/sip');
-    expect(list.body.length).toBeGreaterThan(0);
-    expect(list.body[0].amount).toBeCloseTo(5000, 0);
-  });
-
-  test('POST /api/import/csv - imports SIP installments from CSV', async () => {
-    const csv = `name,symbol,amount,units,nav,installment_date\nNIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15`;
-    const res = await request(app)
-      .post('/api/import/csv?import_type=sip')
-      .attach('file', Buffer.from(csv), 'sip.csv');
-    expect(res.status).toBe(200);
-    expect(res.body.imported).toBe(1);
-
-    const list = await request(app).get('/api/sip?symbol=NIFTYBEES');
-    expect(list.body.length).toBeGreaterThan(0);
-    expect(list.body[0].amount).toBeCloseTo(5000, 0);
-  });
-
-  test('POST /api/import/json - imports SIP installments from JSON', async () => {
-    const res = await request(app).post('/api/import/json').send({
-      import_type: 'sip',
-      records: [
-        { name: 'Axis Bluechip Fund SIP', symbol: 'AXISBLUECHIP', amount: 5000, units: 10.234, nav: 488.80, installment_date: '2025-02-15' },
-        { name: 'HDFC Mid-Cap SIP', amount: 3000, installment_date: '2025-02-15' },
-      ],
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.imported).toBe(2);
-  });
 });
 
 
@@ -771,15 +701,6 @@ describe('Deduplication', () => {
     expect(res.body.duplicates).toEqual([]);
   });
 
-  test('POST /api/import/check-duplicates - never flags SIP as duplicate', async () => {
-    const res = await request(app).post('/api/import/check-duplicates').send({
-      import_type: 'sip',
-      records: [{ name: 'Monthly SIP', amount: 5000 }],
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.duplicates).toEqual([]);
-  });
-
   test('POST /api/import/json - _forceImport bypasses duplicate check', async () => {
     await request(app).post('/api/assets').send({ name: 'My House', category: 'real_estate', current_value: 300000 });
     const res = await request(app).post('/api/import/json').send({
@@ -870,104 +791,6 @@ describe('Value History API', () => {
   test('GET /api/value-history - returns 400 for invalid entity_type', async () => {
     const res = await request(app).get('/api/value-history?entity_type=invalid&entity_id=1');
     expect(res.status).toBe(400);
-  });
-});
-
-// ─── SIP Installments ─────────────────────────────────────────────────────────
-
-describe('SIP Installments API', () => {
-  test('GET /api/sip - returns empty array initially', async () => {
-    const res = await request(app).get('/api/sip');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
-  });
-
-  test('POST /api/sip - creates a SIP installment', async () => {
-    const res = await request(app).post('/api/sip').send({
-      name: 'NIFTY 50 SIP',
-      symbol: 'NIFTYBEES',
-      amount: 5000,
-      units: 10.5,
-      nav: 476.19,
-      installment_date: '2025-01-15',
-    });
-    expect(res.status).toBe(201);
-    expect(res.body.name).toBe('NIFTY 50 SIP');
-    expect(res.body.symbol).toBe('NIFTYBEES');
-    expect(res.body.amount).toBe(5000);
-    expect(res.body.units).toBe(10.5);
-    expect(res.body.installment_date).toBe('2025-01-15');
-  });
-
-  test('POST /api/sip - rejects missing name', async () => {
-    const res = await request(app).post('/api/sip').send({ amount: 1000, symbol: 'X' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/name/i);
-  });
-
-  test('POST /api/sip - rejects invalid amount', async () => {
-    const res = await request(app).post('/api/sip').send({ name: 'SIP', amount: -100 });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/amount/i);
-  });
-
-  test('GET /api/sip/:id - returns single installment', async () => {
-    const created = await request(app).post('/api/sip').send({ name: 'SIP One', amount: 2000 });
-    const res = await request(app).get(`/api/sip/${created.body.id}`);
-    expect(res.status).toBe(200);
-    expect(res.body.name).toBe('SIP One');
-  });
-
-  test('GET /api/sip/:id - 404 for unknown id', async () => {
-    const res = await request(app).get('/api/sip/9999');
-    expect(res.status).toBe(404);
-  });
-
-  test('PUT /api/sip/:id - updates amount', async () => {
-    const created = await request(app).post('/api/sip').send({ name: 'Update SIP', amount: 1000 });
-    const res = await request(app).put(`/api/sip/${created.body.id}`).send({ amount: 1500 });
-    expect(res.status).toBe(200);
-    expect(res.body.amount).toBe(1500);
-  });
-
-  test('DELETE /api/sip/:id - deletes installment', async () => {
-    const created = await request(app).post('/api/sip').send({ name: 'Delete SIP', amount: 500 });
-    const del = await request(app).delete(`/api/sip/${created.body.id}`);
-    expect(del.status).toBe(200);
-    const get = await request(app).get(`/api/sip/${created.body.id}`);
-    expect(get.status).toBe(404);
-  });
-
-  test('GET /api/sip/summary - returns aggregated summary', async () => {
-    await request(app).post('/api/sip').send({ name: 'SIP Jan', symbol: 'AAPL', amount: 5000, units: 25 });
-    await request(app).post('/api/sip').send({ name: 'SIP Feb', symbol: 'AAPL', amount: 5000, units: 27 });
-    const res = await request(app).get('/api/sip/summary');
-    expect(res.status).toBe(200);
-    expect(res.body.length).toBeGreaterThanOrEqual(1);
-    const aapl = res.body.find((s) => s.symbol === 'AAPL');
-    expect(aapl).toBeDefined();
-    expect(aapl.installment_count).toBeGreaterThanOrEqual(2);
-    expect(aapl.total_invested).toBeGreaterThanOrEqual(10000);
-  });
-
-  test('GET /api/sip?symbol=AAPL - filters by symbol', async () => {
-    await request(app).post('/api/sip').send({ name: 'Filter SIP', symbol: 'MSFT', amount: 3000 });
-    await request(app).post('/api/sip').send({ name: 'Other SIP', symbol: 'GOOG', amount: 2000 });
-    const res = await request(app).get('/api/sip?symbol=MSFT');
-    expect(res.status).toBe(200);
-    expect(res.body.every((s) => s.symbol === 'MSFT')).toBe(true);
-  });
-
-  test('POST /api/sip - links to account', async () => {
-    const acc = await request(app).post('/api/accounts').send({ name: 'SIP Account', type: 'brokerage', balance: 0 });
-    const res = await request(app).post('/api/sip').send({
-      name: 'Fund SIP',
-      symbol: 'MUTUAL',
-      account_id: acc.body.id,
-      amount: 10000,
-    });
-    expect(res.status).toBe(201);
-    expect(res.body.account_id).toBe(acc.body.id);
   });
 });
 

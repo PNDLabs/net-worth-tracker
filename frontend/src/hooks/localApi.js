@@ -14,7 +14,6 @@ import * as assetsSvc   from '../db/assetsService';
 import * as metalsSvc   from '../db/metalsService';
 import * as liabSvc     from '../db/liabilitiesService';
 import * as insSvc      from '../db/insuranceService';
-import * as sipSvc      from '../db/sipService';
 import * as nwSvc       from '../db/networthService';
 import * as vhSvc       from '../db/valueHistoryService';
 import * as settingsSvc from '../db/settingsService';
@@ -130,13 +129,6 @@ export const api = {
   getValueHistory: (entityType, entityId) => vhSvc.getValueHistory(entityType, entityId),
   getValueGrowth: (entityType, entityId) => vhSvc.getValueGrowth(entityType, entityId),
   recordValue: (data) => vhSvc.recordValue(data),
-
-  // ─── SIP Installments ────────────────────────────────────────────────────
-  getSipInstallments: (params = {}) => sipSvc.getSipInstallments(params),
-  getSipSummary: () => sipSvc.getSipSummary(),
-  createSipInstallment: (data) => sipSvc.createSipInstallment(data),
-  updateSipInstallment: (id, data) => sipSvc.updateSipInstallment(id, data),
-  deleteSipInstallment: (id) => sipSvc.deleteSipInstallment(id),
 
   // ─── Import ───────────────────────────────────────────────────────────────
   importJson: (importType, records) => importSvc.importRecords(importType, records),

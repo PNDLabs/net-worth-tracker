@@ -14,7 +14,7 @@
  *
  * Parsed output shape:
  *  {
- *    import_type : 'accounts' | 'assets' | 'liabilities' | 'insurance' | 'sip',
+ *    import_type : 'accounts' | 'assets' | 'liabilities' | 'insurance',
  *    records     : Array<object>,
  *    method      : 'ai' | 'pattern',
  *    raw_preview : string   // first 2000 chars of extracted text
@@ -27,11 +27,11 @@
 // multi-page documents (e.g. CAS PDFs with many funds) are fully analysed.
 const MAX_AI_INPUT_CHARS = 100000;
 
-const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, SIP/mutual fund transaction statement, CAS (Consolidated Account Statement), or any other financial record).
+const AI_SYSTEM_PROMPT = `You are a financial document parser. The user will send you raw text from a financial document (bank statement, investment statement, loan statement, insurance policy document, CAS (Consolidated Account Statement), or any other financial record).
 
 Your task is to identify the financial records in the text and return structured JSON in EXACTLY this format – no markdown fences, no prose, only the JSON object:
 {
-  "import_type": "<accounts|assets|liabilities|insurance|sip>",
+  "import_type": "<accounts|assets|liabilities|insurance>",
   "records": [ ... ]
 }
 
@@ -50,9 +50,6 @@ For "insurance" records use:
 - "terms": A comprehensive summary of the policy's key terms extracted verbatim or closely paraphrased from the document. Include: what is covered, coverage limits, deductibles, co-pays/co-insurance, exclusions, waiting periods, claim procedures, and any other material conditions. This is the most important field for enabling later coverage questions — be thorough. Use null only when the document contains no coverage detail at all.
 - "covered_conditions": A JSON array of specific covered conditions, procedures, events, or items explicitly listed in the document (e.g. ["hospitalization", "surgery", "accidental death", "critical illness", "maternity", "dental cleaning"]). Use [] when none can be identified.
 
-For "sip" records (SIP / mutual fund transaction statements) use:
-{ "name": string, "symbol": string|null, "amount": number, "units": number|null, "nav": number|null, "installment_date": "YYYY-MM-DD" }
-
 Rules:
 - Return ONLY the JSON, nothing else.
 - If you cannot identify any records, return {"import_type":"accounts","records":[]}.
@@ -62,8 +59,8 @@ Rules:
 - For investment/brokerage accounts include the total value as the balance.
 - FD (Fixed Deposit) accounts should use type "cd" in accounts records.
 - Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
-- Choose "sip" as import_type when the document contains mutual fund SIP/systematic investment plan transactions with NAV and units data. Each transaction row becomes one record.
 - For CAS (Consolidated Account Statement) documents that list multiple mutual fund scheme portfolios: return each scheme as an "accounts" record with type="brokerage", balance=current market value, institution=AMC name, and use import_type="accounts".
+- For mutual fund / SIP transaction statements: treat each fund scheme as an "accounts" record with type="brokerage" and balance=current market value or total invested amount.
 - When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.
 
 CURRENCY DETECTION (critical – do not default to USD unless the document clearly uses US dollars):
@@ -144,7 +141,7 @@ const AI_VALIDATION_PROMPT = `You are a financial data validator. You will recei
 
 Your task is to cross-check every field in the initial extraction against the raw text, then return a corrected and completed result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON object:
 {
-  "import_type": "<accounts|assets|liabilities|insurance|sip>",
+  "import_type": "<accounts|assets|liabilities|insurance>",
   "records": [ ... ],
   "validation_notes": [ "<string describing each correction or addition>" ]
 }
@@ -421,13 +418,13 @@ function detectStatementType(text) {
   if (EPFO_KEYWORDS.some((kw) => lower.includes(kw)) ||
       /\bemployees['']?\s+provident\b/.test(lower)) return 'accounts';
 
-  // Strong signals for SIP / mutual fund transaction statements
+  // Mutual fund / SIP transaction statements → treat as brokerage accounts
   if (
     /\bsystematic\s+investment\s+plan\b/.test(lower) ||
     /\bsip\s*(?:purchase|installment|debit|transaction)\b/.test(lower) ||
     (/\bfolio\b/.test(lower) && /\bnav\b/.test(lower)) ||
     /\bunits\s+allotted\b/.test(lower)
-  ) return 'sip';
+  ) return 'accounts';
 
   // Strong signals for insurance
   if (
@@ -614,63 +611,6 @@ function parseLiabilityStatement(text) {
   }
 
   return { import_type: 'liabilities', records };
-}
-
-/**
- * Parse a SIP / mutual fund transaction statement into sip_installments records.
- * Handles both tabular format (one row per transaction) and key-value format
- * (single transaction described inline).
- */
-function parseSipStatement(text) {
-  const records = [];
-
-  // Extract scheme/fund name(s) from common header patterns
-  const schemeNames = [];
-  for (const m of text.matchAll(/scheme(?:\s+name)?[ \t:]+([A-Za-z0-9 \-&()/]+?)(?:\r?\n|ISIN|folio|\s{3,})/gi)) {
-    const name = m[1].trim();
-    if (name && !schemeNames.includes(name)) schemeNames.push(name);
-  }
-
-  // Pattern 1: tabular rows "date  SIP-Purchase  amount  units  nav"
-  // e.g. "15-Jan-2025  SIP Purchase  5,000.00  10.2341  488.80"
-  const tabRe = /(\d{1,2}[-/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+(?:SIP[- ]?(?:Purchase|Installment|Debit)?|Purchase|Systematic Investment)\s*([\d,]+(?:\.\d{1,2})?)\s+([\d.]+)\s+([\d.]+)/gi;
-  let m;
-  let si = 0;
-  while ((m = tabRe.exec(text)) !== null) {
-    const schemeName = schemeNames[si] || schemeNames[0] || 'SIP';
-    records.push({
-      name: schemeName,
-      symbol: null,
-      amount: parseFloat(m[2].replace(/,/g, '')),
-      units: parseFloat(m[3]),
-      nav: parseFloat(m[4]),
-      installment_date: normalizeDate(m[1]) || new Date().toISOString().slice(0, 10),
-    });
-    si++;
-  }
-
-  // Pattern 2: key-value format (single or sparse transaction)
-  // e.g. "Amount: 5000  Units: 26.286  NAV: 190.25  Date: 15-Jan-2025"
-  if (records.length === 0) {
-    const amtMatch = text.match(/(?:amount|invested)[ \t:]+(?:Rs\.?|₹|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i);
-    const unitsMatch = text.match(/units?(?:\s+allotted|\s+purchased)?[ \t:]+\s*([\d.]+)/i);
-    const navMatch = text.match(/\bNAV[ \t:]+(?:Rs\.?|₹|INR)?\s*([\d.]+)/i);
-    const dateMatch = text.match(
-      /(?:transaction\s+date|sip\s+date|date)[ \t:]+(\d{1,2}[-/](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-/]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})/i
-    );
-    if (amtMatch) {
-      records.push({
-        name: schemeNames[0] || 'SIP',
-        symbol: null,
-        amount: parseFloat(amtMatch[1].replace(/,/g, '')),
-        units: unitsMatch ? parseFloat(unitsMatch[1]) : null,
-        nav: navMatch ? parseFloat(navMatch[1]) : null,
-        installment_date: (dateMatch && normalizeDate(dateMatch[1])) || new Date().toISOString().slice(0, 10),
-      });
-    }
-  }
-
-  return { import_type: 'sip', records };
 }
 
 /**
@@ -917,7 +857,7 @@ async function parseStatement(text, options = {}) {
           // When the import_type changes we additionally verify that the records contain
           // the required key for the new type (to avoid schema mismatches).
           // We still require it not to silently drop records compared to Pass 1.
-          const REQUIRED_KEY = { accounts: 'balance', assets: 'current_value', liabilities: 'current_balance', insurance: 'premium_amount', sip: 'amount' };
+          const REQUIRED_KEY = { accounts: 'balance', assets: 'current_value', liabilities: 'current_balance', insurance: 'premium_amount' };
           const typeChanged = refined && refined.import_type !== aiResult.import_type;
           const schemaOk = !typeChanged ||
             (Array.isArray(refined.records) && refined.records.length > 0 &&
@@ -979,13 +919,11 @@ async function parseStatement(text, options = {}) {
   const result =
     stmtType === 'cas'
       ? parseCasStatement(text, defaultCurrency)
-      : stmtType === 'sip'
-        ? parseSipStatement(text)
-        : stmtType === 'liabilities'
-          ? parseLiabilityStatement(text)
-          : stmtType === 'insurance'
-            ? parseInsuranceDocument(text)
-            : parseBankStatement(text, defaultCurrency);
+      : stmtType === 'liabilities'
+        ? parseLiabilityStatement(text)
+        : stmtType === 'insurance'
+          ? parseInsuranceDocument(text)
+          : parseBankStatement(text, defaultCurrency);
 
   return { ...result, method: 'pattern', raw_preview, validation_notes: [] };
 }
@@ -999,7 +937,6 @@ Target fields per import type:
 - assets: name (required), category (real_estate/vehicle/crypto/collectible/business/other), acquisition_date (YYYY-MM-DD), acquisition_cost, current_value (required)
 - liabilities: name (required), lender, type (mortgage/auto/student/personal/credit_card/heloc/other), original_principal, current_balance (required), interest_rate, minimum_payment
 - insurance: name (required), provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes
-- sip: name (required), symbol, amount (required), units, nav, installment_date (YYYY-MM-DD), notes
 
 Return ONLY JSON (no markdown fences, no prose):
 {
@@ -1011,7 +948,7 @@ Rules:
 - Map each CSV column to the single best matching target field for the given import_type, or null if no match.
 - Do NOT map two columns to the same target field; pick the best one for each target field.
 - For the required "name" field: if no column is literally named "name", map the most descriptive text column (e.g. "Company Name", "Stock Name", "Fund Name", "Scheme", "Scrip", "Security", "Description") to "name".
-- Semantic aliases: "Ticker"/"Symbol"/"Scrip"/"ISIN" → symbol; "Qty"/"Quantity"/"Units" → shares for assets or units for sip; "LTP"/"Last Price"/"CMP"/"Mkt Price"/"Current Price" → current_price or current_value; "Market Value"/"Mkt Value"/"Current Value"/"Present Value"/"Total Value"/"Portfolio Value" → current_value or balance; "Cost"/"Avg Cost"/"Avg Price"/"Purchase Price" → acquisition_cost; "P&L"/"Gain"/"Gain/Loss"/"Return" → null; "Purchase Date"/"Trade Date"/"Date" → acquisition_date or installment_date; "Lender"/"Bank"/"Creditor" → lender; "Rate"/"Interest Rate"/"APR" → interest_rate.
+- Semantic aliases: "Ticker"/"Symbol"/"Scrip"/"ISIN" → symbol; "Qty"/"Quantity"/"Units" → shares for assets; "LTP"/"Last Price"/"CMP"/"Mkt Price"/"Current Price" → current_price or current_value; "Market Value"/"Mkt Value"/"Current Value"/"Present Value"/"Total Value"/"Portfolio Value" → current_value or balance; "Cost"/"Avg Cost"/"Avg Price"/"Purchase Price" → acquisition_cost; "P&L"/"Gain"/"Gain/Loss"/"Return" → null; "Purchase Date"/"Trade Date"/"Date" → acquisition_date; "Lender"/"Bank"/"Creditor" → lender; "Rate"/"Interest Rate"/"APR" → interest_rate.
 - Convert amounts: remove currency symbols and commas from values before treating as numbers.`;
 
 /**
@@ -1019,7 +956,7 @@ Rules:
  *
  * @param {string[]} headers     – column names from the CSV header row
  * @param {object[]} sampleRows  – first few data rows (raw objects with CSV header keys)
- * @param {string}   importType  – 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {string}   importType  – 'accounts'|'assets'|'liabilities'|'insurance'
  * @param {object}   options     – optional: { apiKey, apiUrl, model }
  * @returns {Promise<{ column_mapping: object, mapping_notes: string[] }|null>}
  */

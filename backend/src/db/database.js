@@ -19,8 +19,10 @@ const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
  *   4 – insurance_plans: added linked_asset_id
  *   5 – precious_metals table (gold/silver/platinum/palladium holdings with
  *       live spot price refresh and purity-aware value calculation)
+ *   6 – removed sip_installments table (SIP tracking removed; mutual funds
+ *       tracked via brokerage accounts and holdings instead)
  */
-const DB_SCHEMA_VERSION = 5;
+const DB_SCHEMA_VERSION = 6;
 
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
@@ -133,22 +135,6 @@ function runMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_value_history_entity
       ON value_history(entity_type, entity_id, recorded_at);
 
-    CREATE TABLE IF NOT EXISTS sip_installments (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      name             TEXT    NOT NULL,
-      symbol           TEXT,
-      account_id       INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      amount           REAL    NOT NULL,
-      units            REAL,
-      nav              REAL,
-      installment_date TEXT    NOT NULL DEFAULT (date('now')),
-      notes            TEXT,
-      created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sip_installments_date
-      ON sip_installments(installment_date);
-
     CREATE TABLE IF NOT EXISTS precious_metals (
       id                 INTEGER PRIMARY KEY AUTOINCREMENT,
       name               TEXT    NOT NULL,
@@ -180,6 +166,11 @@ function runMigrations(db) {
   addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
   addColumnIfMissing('insurance_plans', 'insured_name', 'TEXT');
   addColumnIfMissing('insurance_plans', 'linked_asset_id', 'INTEGER REFERENCES assets(id) ON DELETE SET NULL');
+
+  // Schema v6: remove sip_installments table (SIP tracking removed).
+  // DROP IF EXISTS is safe to run on every startup.
+  db.exec('DROP INDEX IF EXISTS idx_sip_installments_date');
+  db.exec('DROP TABLE IF EXISTS sip_installments');
 
   // Stamp the schema version so tooling can inspect it without querying tables.
   db.pragma(`user_version = ${DB_SCHEMA_VERSION}`);

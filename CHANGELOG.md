@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.8] – 2026-04-28
+
+### Removed
+- **SIP Tracker removed** — the SIP (Systematic Investment Plan) installment tracking feature has been removed to eliminate confusion between SIP payment history and investment account balances. Mutual funds and SIP-linked investments are already tracked via brokerage-type Accounts and Holdings (symbol, shares, current price, current value), which are included in net worth. SIP installments were never part of net worth calculations (they tracked cost-basis payments only) and created a confusing duplicate view.
+  - Removed `sip_installments` table and `idx_sip_installments_date` index (DB schema v6 migration drops them).
+  - Removed `/api/sip` REST endpoint (`backend/src/routes/sip.js`).
+  - Removed SIP nav item and `SipPage.jsx` from the frontend.
+  - Removed `sipService.js` (local SQLite path).
+  - Removed SIP import type from CSV / JSON / PDF import routes and the Import page.
+  - PDF/text statement parser now classifies SIP/mutual fund transaction statements as `accounts` (brokerage type) instead of a separate `sip` type, so they are imported directly as investment accounts.
+  - Removed SIP-related tests.
+
+### Changed
+- **DB schema version → 6** (drops `sip_installments` table and index on upgrade).
+
+---
+
 ## [1.7.7] – 2026-04-27
 
 ### Changed

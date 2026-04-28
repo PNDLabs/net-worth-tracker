@@ -7,7 +7,6 @@ const IMPORT_TYPES = [
   { value: 'assets', label: 'Assets (real estate, vehicles, etc.)', icon: '🏠' },
   { value: 'liabilities', label: 'Liabilities (loans, credit cards, etc.)', icon: '💳' },
   { value: 'insurance', label: 'Insurance (policies, coverage)', icon: '🛡️' },
-  { value: 'sip', label: 'SIP Installments (mutual funds)', icon: '💰' },
 ];
 
 function getCsvTemplates(currency) {
@@ -17,7 +16,6 @@ function getCsvTemplates(currency) {
     assets: `name,category,acquisition_date,acquisition_cost,current_value\nPrimary Home,real_estate,2020-06-15,350000,420000\nCar,vehicle,2022-01-10,42000,32000\nBitcoin,crypto,,25000,30000`,
     liabilities: `name,lender,type,original_principal,current_balance,interest_rate,minimum_payment\nHome Mortgage,My Bank,mortgage,400000,375000,3.5,2100\nCar Loan,Auto Finance,auto,28000,19500,4.9,450\nCredit Card,My Bank,credit_card,,3200,19.99,96`,
     insurance: `name,provider,type,policy_number,premium_amount,premium_frequency,coverage_amount,start_date,end_date,renewal_date,notes\nLife Insurance,My Insurer,life,POL-123456,200,monthly,500000,2020-01-01,,2025-01-01,\nHealth Plan,My Insurer,health,HC-789,350,monthly,1000000,2024-01-01,2024-12-31,2025-01-01,`,
-    sip: `name,symbol,amount,units,nav,installment_date,notes\nNIFTY 50 Index Fund SIP,NIFTYBEES,5000,26.286,190.25,2025-01-15,January SIP\nAxis Bluechip Fund SIP,AXISBLUECHIP,5000,10.234,488.80,2025-01-15,`,
   };
 }
 
@@ -357,8 +355,8 @@ export default function ImportPage() {
             <div className="card mt-4">
               <div className="section-title">PDF Tips</div>
               <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
-                <li>Supports bank, investment, loan, insurance, and <strong>SIP / mutual fund</strong> statements</li>
-                <li>SIP statements auto-detected from CAMS, KFintech, or similar AMC PDFs</li>
+                <li>Supports bank, investment, loan, insurance, and <strong>mutual fund / CAS</strong> statements</li>
+                <li>Mutual fund / CAS statements auto-detected from CAMS, KFintech, or similar AMC PDFs and imported as brokerage accounts</li>
                 <li>Password-protected PDFs supported</li>
                 <li>Set <code>AI_API_KEY</code> in <code>.env</code> for best accuracy</li>
                 <li>Review the preview before importing</li>

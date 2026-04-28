@@ -18,9 +18,7 @@ function getDefaultCurrency(conn) {
 
 /**
  * Returns true when a row with the same natural key already exists in the DB.
- * SIP installments are never deduplicated (each payment is a unique event).
- * @param {object} conn - better-sqlite3 connection
- * @param {string} importType - 'accounts'|'assets'|'liabilities'|'insurance'|'sip'
+ * @param {string} importType - 'accounts'|'assets'|'liabilities'|'insurance'
  * @param {object} row - record with at least { name, institution?, lender?, provider? }
  */
 function isDuplicateRecord(conn, importType, row) {
@@ -66,7 +64,7 @@ const upload = multer({
  *   ?import_type=assets
  *   ?import_type=liabilities
  */
-const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance', 'sip'];
+const VALID_IMPORT_TYPES = ['accounts', 'assets', 'liabilities', 'insurance'];
 
 router.post('/csv', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -170,23 +168,6 @@ router.post('/csv', upload.single('file'), (req, res) => {
         insured_name ? String(insured_name) : null
       );
 
-    } else if (importType === 'sip') {
-      const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
-      if (!name) throw new Error('name is required');
-      if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
-      conn.prepare(
-        `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        String(name),
-        symbol ? String(symbol) : null,
-        account_id ? Number(account_id) : null,
-        Number(amount),
-        units != null ? Number(units) : null,
-        nav != null ? Number(nav) : null,
-        installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
-        notes ? String(notes) : null
-      );
     }
   });
 
@@ -212,7 +193,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
  * Upload a CSV file, use AI to intelligently map column headers to target schema fields,
  * and return a preview of the mapped records WITHOUT writing to the database.
  *
- * Query params: ?import_type=accounts|assets|liabilities|insurance|sip  (default: accounts)
+ * Query params: ?import_type=accounts|assets|liabilities|insurance  (default: accounts)
  *
  * When AI is unavailable, falls back to basic lowercase+underscore key normalization.
  */
@@ -360,23 +341,6 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           covJson,
           insured_name ? String(insured_name) : null
         );
-
-      } else if (importType === 'sip') {
-        const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
-        if (!name) throw new Error('name is required');
-        if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
-        conn.prepare(
-          `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          String(name),
-          symbol ? String(symbol) : null,
-          account_id ? Number(account_id) : null,
-          Number(amount),
-          units != null ? Number(units) : null,
-          nav != null ? Number(nav) : null,
-          installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
-          notes ? String(notes) : null
-        );
       }
       results.imported++;
     } catch (err) {
@@ -393,7 +357,6 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
  * POST /api/import/check-duplicates
  * Body: { import_type, records }
  * Returns: { duplicates: [index, ...] } – indices of records that already exist in the DB.
- * SIP installments are never flagged (each payment is a unique event).
  */
 router.post('/check-duplicates', express.json({ limit: '1mb' }), (req, res) => {
   const { import_type: importType, records } = req.body || {};
@@ -406,7 +369,7 @@ router.post('/check-duplicates', express.json({ limit: '1mb' }), (req, res) => {
   const conn = db.getDb();
   const duplicates = [];
   for (let i = 0; i < records.length; i++) {
-    if (importType !== 'sip' && isDuplicateRecord(conn, importType, records[i])) {
+    if (isDuplicateRecord(conn, importType, records[i])) {
       duplicates.push(i);
     }
   }
@@ -468,7 +431,7 @@ router.post('/pdf/preview', upload.single('file'), async (req, res) => {
  * POST /api/import/pdf
  * Parse and immediately import a PDF statement into the database.
  * Accepts same fields as /pdf/preview, plus:
- *   import_type       – optional override ('accounts'|'assets'|'liabilities'|'insurance'|'sip')
+ *   import_type       – optional override ('accounts'|'assets'|'liabilities'|'insurance')
  *   previewed_records – optional JSON string of pre-parsed records from /pdf/preview.
  *                       When provided the PDF is not re-parsed, preventing drift between
  *                       what the user reviewed and what is actually written to the DB.
@@ -576,22 +539,6 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             terms ? String(terms) : null,
             covJson,
             insured_name ? String(insured_name) : null
-          );
-        } else if (importType === 'sip') {
-          const { name, symbol, account_id, amount, units, nav, installment_date, notes } = row;
-          if (!name) throw new Error('name is required');
-          if (amount == null || Number(amount) <= 0) throw new Error('amount must be a positive number');
-          conn.prepare(
-            `INSERT INTO sip_installments (name, symbol, account_id, amount, units, nav, installment_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-          ).run(
-            String(name),
-            symbol ? String(symbol) : null,
-            account_id ? Number(account_id) : null,
-            Number(amount),
-            units != null ? Number(units) : null,
-            nav != null ? Number(nav) : null,
-            installment_date ? String(installment_date) : new Date().toISOString().slice(0, 10),
-            notes ? String(notes) : null
           );
         }
         results.imported++;

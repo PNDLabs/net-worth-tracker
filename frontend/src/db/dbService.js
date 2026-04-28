@@ -113,22 +113,6 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_value_history_entity
     ON value_history(entity_type, entity_id, recorded_at);
 
-  CREATE TABLE IF NOT EXISTS sip_installments (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    name             TEXT    NOT NULL,
-    symbol           TEXT,
-    account_id       INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-    amount           REAL    NOT NULL,
-    units            REAL,
-    nav              REAL,
-    installment_date TEXT    NOT NULL DEFAULT (date('now')),
-    notes            TEXT,
-    created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_sip_installments_date
-    ON sip_installments(installment_date);
-
   CREATE TABLE IF NOT EXISTS precious_metals (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     name               TEXT    NOT NULL,
