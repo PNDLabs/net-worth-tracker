@@ -23,6 +23,14 @@ const NAV_ITEMS = [
   { id: 'settings',     label: 'Settings',     icon: '⚙️' },
 ];
 
+// Primary tabs shown in the mobile bottom nav bar
+const BOTTOM_NAV_ITEMS = [
+  { id: 'dashboard',   label: 'Dashboard',  icon: '📊' },
+  { id: 'accounts',    label: 'Accounts',   icon: '🏦' },
+  { id: 'assets',      label: 'Assets',     icon: '🏠' },
+  { id: 'liabilities', label: 'Debts',      icon: '💳' },
+];
+
 const PAGES = {
   dashboard:   Dashboard,
   accounts:    AccountsPage,
@@ -97,15 +105,6 @@ function AppInner() {
 
   return (
     <div className="app-layout">
-      {/* Hamburger toggle (visible on mobile only) */}
-      <button
-        className="sidebar-toggle"
-        aria-label="Open navigation menu"
-        onClick={() => setSidebarOpen((o) => !o)}
-      >
-        {sidebarOpen ? '✕' : '☰'}
-      </button>
-
       {/* Overlay that closes sidebar on tap */}
       <div
         className={`sidebar-overlay${sidebarOpen ? ' open' : ''}`}
@@ -147,6 +146,27 @@ function AppInner() {
       <main className="main-content">
         <PageComponent key={refreshKey} onRefresh={refresh} navigate={navigate} />
       </main>
+
+      {/* Bottom navigation bar – visible on mobile only */}
+      <nav className="bottom-nav">
+        {BOTTOM_NAV_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            className={`bottom-nav-item${page === item.id ? ' active' : ''}`}
+            onClick={() => navigate(item.id)}
+          >
+            <span className="nav-icon">{item.icon}</span>
+            {item.label}
+          </button>
+        ))}
+        <button
+          className={`bottom-nav-item${!BOTTOM_NAV_ITEMS.some(i => i.id === page) ? ' active' : ''}`}
+          onClick={() => setSidebarOpen((o) => !o)}
+        >
+          <span className="nav-icon">{sidebarOpen ? '✕' : '☰'}</span>
+          More
+        </button>
+      </nav>
 
       {showCurrencyModal && <CurrencyModal onClose={() => setShowCurrencyModal(false)} />}
     </div>

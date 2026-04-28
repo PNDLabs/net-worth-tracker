@@ -251,13 +251,13 @@ export default function InsurancePage() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Insured</th>
-                  <th>Provider</th>
+                  <th className="hide-mobile">Insured</th>
+                  <th className="hide-mobile">Provider</th>
                   <th>Type</th>
-                  <th>Policy #</th>
+                  <th className="hide-mobile">Policy #</th>
                   <th style={{ textAlign: 'right' }}>Premium</th>
                   <th style={{ textAlign: 'right' }}>Coverage</th>
-                  <th>Start Date</th>
+                  <th className="hide-mobile">Start Date</th>
                   <th>End / Renewal</th>
                   <th>Status</th>
                   <th>Actions</th>
@@ -282,10 +282,10 @@ export default function InsurancePage() {
                           </div>
                         )}
                       </td>
-                      <td>{p.insured_name || '—'}</td>
-                      <td>{p.provider || '—'}</td>
-                      <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
-                      <td style={{ fontSize: 12 }}>{p.policy_number || '—'}</td>
+                      <td className="hide-mobile">{p.insured_name || '—'}</td>
+                       <td className="hide-mobile">{p.provider || '—'}</td>
+                       <td><span className={`badge badge-${p.type}`}>{typeLabel(p.type)}</span></td>
+                       <td className="hide-mobile" style={{ fontSize: 12 }}>{p.policy_number || '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         {p.premium_amount != null ? (
                           <>
@@ -300,7 +300,7 @@ export default function InsurancePage() {
                       <td style={{ textAlign: 'right' }}>
                         {p.coverage_amount != null ? fmt(p.coverage_amount) : '—'}
                       </td>
-                      <td>{formatDate(p.start_date)}</td>
+                      <td className="hide-mobile">{formatDate(p.start_date)}</td>
                       <td>
                         {p.end_date ? (
                           <div>

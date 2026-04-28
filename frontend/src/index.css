@@ -17,6 +17,7 @@
   --radius: 8px;
   --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
   --transition: 0.15s ease;
+  --bottom-nav-height: 58px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -224,11 +225,47 @@ tr:hover td { background: var(--color-surface-2); }
 .section-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
 .mb-4 { margin-bottom: 16px; }
 .mt-4 { margin-top: 16px; }
-.flex-gap { display: flex; gap: 8px; align-items: center; }
+.flex-gap { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ─── Dashboard chart grid ───────────────────────────────────────────────── */
+.dashboard-chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* ─── Bottom Navigation (mobile) ─────────────────────────────────────────── */
+.bottom-nav {
+  display: none;
+}
+
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 4px;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: color var(--transition);
+  min-height: var(--bottom-nav-height);
+  letter-spacing: 0.2px;
+}
+.bottom-nav-item .nav-icon { font-size: 20px; line-height: 1; }
+.bottom-nav-item.active { color: var(--color-primary); }
+.bottom-nav-item:hover { color: var(--color-primary); background: none; }
 
 /* ─── Mobile Responsive ──────────────────────────────────────────────────── */
 
-/* Hamburger toggle button – hidden on desktop */
+/* Hamburger toggle button – hidden on desktop, hidden on mobile too (replaced by bottom nav) */
 .sidebar-toggle {
   display: none;
   position: fixed;
@@ -258,12 +295,25 @@ tr:hover td { background: var(--color-surface-2); }
 }
 
 @media (max-width: 768px) {
-  /* Show the hamburger */
-  .sidebar-toggle { display: flex; }
+  /* Show bottom navigation */
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--bottom-nav-height);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    z-index: 1100;
+    box-shadow: 0 -2px 8px rgba(0,0,0,.06);
+    /* safe area for notched phones */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
 
-  /* Push main content down so it doesn't go under the toggle */
+  /* Push main content up so it doesn't go under the bottom nav */
   .main-content {
-    padding: 64px 16px 24px;
+    padding: 20px 16px calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 16px);
   }
 
   /* Sidebar slides in as an overlay on mobile */
@@ -300,6 +350,20 @@ tr:hover td { background: var(--color-surface-2); }
 
   /* Progress bars in liabilities fit on one line */
   .progress-bar-container { min-width: 60px; }
+
+  /* Dashboard chart grid stacks vertically */
+  .dashboard-chart-grid { grid-template-columns: 1fr; }
+
+  /* Hide less important table columns on mobile */
+  .hide-mobile { display: none !important; }
+
+  /* Comfortable tap targets for action buttons in tables */
+  td .btn-sm { min-height: 32px; padding: 5px 10px; }
+
+  /* Make regular buttons tall enough for touch */
+  .btn-primary, .btn-ghost, .btn-danger {
+    min-height: 40px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -307,5 +371,8 @@ tr:hover td { background: var(--color-surface-2); }
   .modal { padding: 20px 16px; }
   .form-row { grid-template-columns: 1fr; }
   .card-grid { grid-template-columns: 1fr; }
+
+  /* Tighter page header button rows on small phones */
+  .page-header .flex-gap { width: 100%; }
 }
 
