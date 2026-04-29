@@ -77,7 +77,7 @@ export default function HistoryPage() {
                   <th style={{ textAlign: 'right' }}>Total Assets</th>
                   <th style={{ textAlign: 'right' }}>Total Liabilities</th>
                   <th style={{ textAlign: 'right' }}>Net Worth</th>
-                  <th>Notes</th>
+                  <th className="hide-mobile">Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -87,7 +87,7 @@ export default function HistoryPage() {
                     <td style={{ textAlign: 'right' }} className="amount positive">{fmt(s.total_assets)}</td>
                     <td style={{ textAlign: 'right' }} className="amount negative">{fmt(s.total_liabilities)}</td>
                     <td className="amount" style={{ textAlign: 'right', color: 'var(--color-net)', fontWeight: 700 }}>{fmt(s.net_worth)}</td>
-                    <td>{s.notes || '—'}</td>
+                    <td className="hide-mobile">{s.notes || '—'}</td>
                   </tr>
                 ))}
               </tbody>

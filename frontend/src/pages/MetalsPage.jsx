@@ -182,13 +182,13 @@ export default function MetalsPage() {
                 <tr>
                   <th>Name</th>
                   <th>Type / Form</th>
-                  <th>Purity</th>
+                  <th className="hide-mobile">Purity</th>
                   <th style={{ textAlign: 'right' }}>Qty (g)</th>
-                  <th style={{ textAlign: 'right' }}>Price/g</th>
+                  <th className="hide-mobile" style={{ textAlign: 'right' }}>Price/g</th>
                   <th style={{ textAlign: 'right' }}>Current Value</th>
-                  <th style={{ textAlign: 'right' }}>Cost Basis</th>
+                  <th className="hide-mobile" style={{ textAlign: 'right' }}>Cost Basis</th>
                   <th style={{ textAlign: 'right' }}>Gain/Loss</th>
-                  <th>Last Update</th>
+                  <th className="hide-mobile">Last Update</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -207,19 +207,19 @@ export default function MetalsPage() {
                           {' '}
                           <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{m.metal_form}</span>
                         </td>
-                        <td>{m.purity || '—'}</td>
+                        <td className="hide-mobile">{m.purity || '—'}</td>
                         <td style={{ textAlign: 'right' }}>{m.quantity_grams}g</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>
                           {m.current_price_gram != null ? fmt(m.current_price_gram) : '—'}
                         </td>
                         <td style={{ textAlign: 'right' }} className="amount positive">{fmt(m.current_value)}</td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>
                           {m.acquisition_cost != null ? fmt(m.acquisition_cost) : '—'}
                         </td>
                         <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
                           {gl != null ? `${gl >= 0 ? '+' : ''}${fmt(gl)}` : '—'}
                         </td>
-                        <td style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        <td className="hide-mobile" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
                           {m.last_price_update
                             ? new Date(m.last_price_update).toLocaleDateString()
                             : '—'}

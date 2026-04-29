@@ -75,7 +75,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+      <div className="dashboard-chart-grid">
         {/* Asset breakdown */}
         <div className="card">
           <div className="section-title">Asset Breakdown</div>

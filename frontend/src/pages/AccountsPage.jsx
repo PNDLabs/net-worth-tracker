@@ -164,9 +164,9 @@ export default function AccountsPage() {
               <thead>
                 <tr>
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>Name<SortIcon col="name" /></th>
-                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('institution')}>Institution<SortIcon col="institution" /></th>
+                  <th className="hide-mobile" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('institution')}>Institution<SortIcon col="institution" /></th>
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('type')}>Type<SortIcon col="type" /></th>
-                  <th>Currency</th>
+                  <th className="hide-mobile">Currency</th>
                   <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('balance')}>Balance<SortIcon col="balance" /></th>
                   <th>Actions</th>
                 </tr>
@@ -185,9 +185,9 @@ export default function AccountsPage() {
                         )}
                         <strong>{acc.name}</strong>
                       </td>
-                      <td>{acc.institution || '—'}</td>
+                      <td className="hide-mobile">{acc.institution || '—'}</td>
                       <td><span className={`badge badge-${acc.type}`}>{typeLabel(acc.type)}</span></td>
-                      <td>{acc.currency}</td>
+                      <td className="hide-mobile">{acc.currency}</td>
                       <td className="amount" style={{ textAlign: 'right' }}>{fmt(acc.balance)}</td>
                       <td>
                         <div className="flex-gap">

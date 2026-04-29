@@ -12,6 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.9] – 2026-04-28
+
+### Changed
+- **Mobile-first responsive UI overhaul** — complete UX/UI review and improvements for mobile devices:
+  - **Bottom navigation bar** — replaced the floating hamburger with a fixed bottom tab bar on mobile (≤ 768 px) showing Dashboard, Accounts, Assets, Liabilities, and a "More ☰" tab that opens the full sidebar. Follows standard mobile-app navigation patterns so the app is immediately intuitive without documentation.
+  - **Dashboard responsive grid** — the two-column chart/breakdown grid now collapses to a single column on mobile (was previously a hardcoded inline style that ignored the viewport).
+  - **Table column hiding** — less critical columns are hidden on mobile to eliminate horizontal overflow and keep the most important data visible at a glance:
+    - *Accounts*: Institution, Currency hidden.
+    - *Assets*: Acquired date, Cost Basis hidden.
+    - *Liabilities*: Lender, Original Principal, Interest Rate, Paid-Off % hidden.
+    - *Precious Metals*: Purity, Price/g, Cost Basis, Last Update hidden.
+    - *Insurance*: Insured, Provider, Policy #, Start Date hidden.
+    - *History*: Notes hidden.
+  - **Touch-friendly targets** — action buttons in tables get minimum 32 px height; primary/ghost/danger buttons get minimum 40 px height on mobile.
+  - **flex-gap wraps** — all header button groups now wrap to a second line instead of overflowing on narrow screens.
+  - **Safe-area padding** — bottom content padding respects `env(safe-area-inset-bottom)` for notched phones.
+
+---
+
 ## [1.7.8] – 2026-04-28
 
 ### Removed

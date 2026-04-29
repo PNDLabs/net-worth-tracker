@@ -87,12 +87,12 @@ export default function LiabilitiesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th>Lender</th><th>Type</th>
-                  <th style={{ textAlign: 'right' }}>Original</th>
+                  <th>Name</th><th className="hide-mobile">Lender</th><th>Type</th>
+                  <th className="hide-mobile" style={{ textAlign: 'right' }}>Original</th>
                   <th style={{ textAlign: 'right' }}>Balance</th>
-                  <th style={{ textAlign: 'right' }}>Rate</th>
+                  <th className="hide-mobile" style={{ textAlign: 'right' }}>Rate</th>
                   <th style={{ textAlign: 'right' }}>Min. Payment</th>
-                  <th style={{ textAlign: 'right' }}>Paid Off</th>
+                  <th className="hide-mobile" style={{ textAlign: 'right' }}>Paid Off</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -103,13 +103,13 @@ export default function LiabilitiesPage() {
                     <>
                       <tr key={l.id}>
                         <td><strong>{l.name}</strong>{l.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{l.notes}</div>}</td>
-                        <td>{l.lender || '—'}</td>
+                        <td className="hide-mobile">{l.lender || '—'}</td>
                         <td><span className={`badge badge-${l.type}`}>{typeLabel(l.type)}</span></td>
-                        <td style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
                         <td style={{ textAlign: 'right' }} className="amount negative">{fmt(l.current_balance)}</td>
-                        <td style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
                         <td style={{ textAlign: 'right' }}>{l.minimum_payment != null ? fmt(l.minimum_payment) : '—'}</td>
-                        <td style={{ textAlign: 'right' }}>{pct != null ? `${pct.toFixed(1)}%` : '—'}</td>
+                        <td className="hide-mobile" style={{ textAlign: 'right' }}>{pct != null ? `${pct.toFixed(1)}%` : '—'}</td>
                         <td>
                           <div className="flex-gap">
                             <button className="btn-ghost btn-sm" onClick={() => openEdit(l)}>Edit</button>
