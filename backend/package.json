@@ -1,6 +1,6 @@
 {
   "name": "net-worth-tracker-backend",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "Backend API for the Net Worth Tracker application",
   "main": "src/app.js",
   "scripts": {

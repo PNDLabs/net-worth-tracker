@@ -244,7 +244,7 @@ export default function AccountsPage() {
           </div>
 
           {/* ── Grouped accounts table ── */}
-          <div className="table-container">
+          <div className="table-container accounts-table-container">
             <table className="accounts-table">
               <thead>
                 <tr>
@@ -288,7 +288,7 @@ export default function AccountsPage() {
                               </button>
                             )}
                             <strong>{acc.name}</strong>
-                            {acc.institution && <span className="show-mobile-only account-institution"> · {acc.institution}</span>}
+                            {acc.institution && <span className="show-mobile-only account-institution"><span className="institution-sep"> · </span>{acc.institution}</span>}
                           </td>
                           <td className="hide-mobile">{acc.institution || '—'}</td>
                           <td className="hide-mobile">{acc.currency}</td>

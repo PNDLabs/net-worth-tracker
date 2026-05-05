@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.5] – 2026-05-05
+
+### Fixed
+- **Accounts page – mobile card layout** — on screens ≤ 768 px the accounts table now renders as compact flex card rows instead of a scrolling table. `thead` is hidden; each account row displays name (+ institution on its own line below) on the left with balance and ⋮ menu pinned to the right. Group header rows remain full-width section dividers. Expanded holdings/history panels display as block-level content beneath the relevant card.
+
+---
+
 ## [1.8.4] – 2026-05-05
 
 ### Changed

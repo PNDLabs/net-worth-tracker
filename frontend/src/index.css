@@ -478,4 +478,71 @@ tr:hover td { background: var(--color-surface-2); }
     scrollbar-width: none;
   }
   .type-chips::-webkit-scrollbar { display: none; }
+
+  /* ── Accounts page: card layout ── */
+
+  /* No horizontal scroll needed; cards fill the full width */
+  .accounts-table-container { overflow-x: visible; }
+
+  /* Collapse table structure so we can use flex/block layout */
+  .accounts-table,
+  .accounts-table tbody { display: block; width: 100%; }
+
+  /* Hide the column header row — group headers supply context */
+  .accounts-table thead { display: none; }
+
+  /* Group header rows: block, full width (inner is already flex) */
+  .accounts-table tr.group-header-row { display: block; }
+  .accounts-table tr.group-header-row td { display: block; }
+
+  /* Each account row becomes a compact flex card */
+  .accounts-table tr.account-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .accounts-table tr.account-row:hover td { background: transparent; }
+
+  /* Name cell takes all available space */
+  .accounts-table tr.account-row .td-name {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    padding: 0;
+  }
+  .accounts-table tr.account-row .td-name strong {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .accounts-table tr.account-row .td-name .account-institution {
+    display: block;
+    margin-left: 0;
+  }
+  /* Hide the ' · ' separator on mobile (institution is on its own line) */
+  .accounts-table tr.account-row .td-name .institution-sep { display: none; }
+
+  /* Balance cell: compact, right-aligned, no extra padding */
+  .accounts-table tr.account-row .td-balance {
+    padding: 0;
+    white-space: nowrap;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Actions cell: no padding, don't inflate height */
+  .accounts-table tr.account-row .td-actions {
+    padding: 0;
+    flex-shrink: 0;
+  }
+  /* Keep the ⋮ button a comfortable touch target but not huge */
+  .accounts-table .action-menu-btn { min-height: 36px; padding: 4px 10px; }
+
+  /* Expanded holdings / history rows */
+  .accounts-table tr.expand-row { display: block; }
+  .accounts-table tr.expand-row td { display: block; }
 }
