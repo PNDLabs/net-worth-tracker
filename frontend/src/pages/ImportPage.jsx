@@ -34,8 +34,9 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
 
   useEffect(() => {
     if (!preview.records || preview.records.length === 0) return;
-    if (dupCacheRef[importType] !== undefined) {
-      const cached = dupCacheRef[importType];
+    const cached = dupCacheRef[importType];
+    // Guard: only use the cache if it has the expected shape (dbDups + batchDups Sets).
+    if (cached && cached.dbDups instanceof Set && cached.batchDups instanceof Set) {
       setDuplicateIndices(cached.dbDups);
       setWithinBatchIndices(cached.batchDups);
       setDuplicateActions(new Map());
@@ -130,19 +131,25 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         </div>
       )}
 
-      {!checkingDuplicates && duplicateIndices.size > 0 && (
-        <div style={{ padding: '10px 14px', borderRadius: 6, fontSize: 13, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 8 }}>
-          ⚠️ <strong>{duplicateIndices.size}</strong> record(s) already exist in the database.
-          For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), or <strong>Create new</strong>.
-        </div>
-      )}
-
-      {!checkingDuplicates && withinBatchIndices.size > 0 && (
-        <div style={{ padding: '10px 14px', borderRadius: 6, fontSize: 13, background: '#f3e5f5', color: '#6a1b9a', border: '1px solid #ce93d8', marginBottom: 12 }}>
-          📋 <strong>{withinBatchIndices.size}</strong> record(s) appear more than once in this file (in-file duplicates — e.g. a summary and a detail row for the same account).
-          The later occurrence(s) default to <strong>Skip</strong>. Choose <strong>Keep this one</strong> to import anyway.
-        </div>
-      )}
+      {(() => {
+        const bannerBase = { padding: '10px 14px', borderRadius: 6, fontSize: 13 };
+        return (
+          <>
+            {!checkingDuplicates && duplicateIndices.size > 0 && (
+              <div style={{ ...bannerBase, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 8 }}>
+                ⚠️ <strong>{duplicateIndices.size}</strong> record(s) already exist in the database.
+                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), or <strong>Create new</strong>.
+              </div>
+            )}
+            {!checkingDuplicates && withinBatchIndices.size > 0 && (
+              <div style={{ ...bannerBase, background: '#f3e5f5', color: '#6a1b9a', border: '1px solid #ce93d8', marginBottom: 12 }}>
+                📋 <strong>{withinBatchIndices.size}</strong> record(s) appear more than once in this file (in-file duplicates — e.g. a summary and a detail row for the same account).
+                The later occurrence(s) default to <strong>Skip</strong>. Choose <strong>Keep this one</strong> to import anyway.
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       <div className="table-container" style={{ marginBottom: 16, maxHeight: 300, overflowY: 'auto' }}>
         <table>
