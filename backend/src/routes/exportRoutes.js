@@ -13,7 +13,7 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
 
-const APP_VERSION           = '1.8.0';
+const APP_VERSION           = '1.8.1';
 const EXPORT_SCHEMA_VERSION = 3;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

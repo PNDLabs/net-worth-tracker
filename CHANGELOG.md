@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.1] – 2026-05-05
+
+### Added
+- **Import: within-file duplicate detection** — the preview panel now detects records that appear more than once *within the same imported file* (e.g. a summary section and a details section listing the same account). In-file duplicates are highlighted in purple with two per-row choices:
+  - **Skip (keep first)** (default) — the later occurrence is silently dropped from the import. This is the safe default for statements that include both a summary and a detail block.
+  - **Keep this one** — the later occurrence is also imported (uses `_forceImport`), creating a second entry alongside the first.
+- **Combined in-file + DB duplicate handling** — if a row is both an in-file duplicate *and* already exists in the database, all three existing actions (Skip / Update existing / Create new) are offered, plus a small "📋 also in-file dup" label so the context is clear.
+- The `check-duplicates` API endpoint (`POST /api/import/check-duplicates`) now returns a `withinBatch` array alongside the existing `duplicates` array, listing the indices of in-file duplicate rows.
+
+---
+
 ## [1.8.0] – 2026-05-05
 
 ### Added

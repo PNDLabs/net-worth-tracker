@@ -26,6 +26,20 @@ function isDuplicateRecord(conn, importType, row) {
 }
 
 /**
+ * Returns a string key that uniquely identifies a record's natural key within a batch.
+ * Used to detect within-file duplicates (rows that share the same identity within the
+ * same imported file, e.g. a summary line and a detail line for the same account).
+ */
+function getBatchKey(importType, row) {
+  const n = String(row.name || '').toLowerCase().trim();
+  if (importType === 'accounts') return `${n}|${String(row.institution || '').toLowerCase().trim()}`;
+  if (importType === 'assets') return n;
+  if (importType === 'liabilities') return `${n}|${String(row.lender || '').toLowerCase().trim()}`;
+  if (importType === 'insurance') return `${n}|${String(row.provider || '').toLowerCase().trim()}|${String(row.insured_name || '').toLowerCase().trim()}`;
+  return n;
+}
+
+/**
  * Returns the existing DB record (with id and current value) if a matching row exists.
  */
 function getExistingRecord(conn, importType, row) {
@@ -504,7 +518,11 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
 /**
  * POST /api/import/check-duplicates
  * Body: { import_type, records }
- * Returns: { duplicates: [index, ...] } – indices of records that already exist in the DB.
+ * Returns:
+ *   duplicates  – indices of records that already exist in the DB.
+ *   withinBatch – indices of records that are duplicates of an earlier row in the same
+ *                 batch (in-file duplicates, e.g. a summary and a detail line for the
+ *                 same account in a single statement).
  */
 router.post('/check-duplicates', express.json({ limit: '1mb' }), (req, res) => {
   const { import_type: importType, records } = req.body || {};
@@ -516,12 +534,20 @@ router.post('/check-duplicates', express.json({ limit: '1mb' }), (req, res) => {
   }
   const conn = db.getDb();
   const duplicates = [];
+  const withinBatch = [];
+  const seenKeys = new Set();
   for (let i = 0; i < records.length; i++) {
+    const key = getBatchKey(importType, records[i]);
+    if (seenKeys.has(key)) {
+      withinBatch.push(i);
+    } else {
+      seenKeys.add(key);
+    }
     if (isDuplicateRecord(conn, importType, records[i])) {
       duplicates.push(i);
     }
   }
-  res.json({ duplicates });
+  res.json({ duplicates, withinBatch });
 });
 
 /**
