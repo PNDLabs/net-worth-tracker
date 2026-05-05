@@ -8,6 +8,91 @@ const { parseStatement, mapCsvColumnsWithAI } = require('../utils/statementParse
 
 class DuplicateError extends Error {}
 
+// ─── CSV Column Alias Normalizer ──────────────────────────────────────────────
+
+/**
+ * Maps normalized column names (lowercase, underscores) that are common in
+ * brokerage/financial CSVs (e.g. Zerodha holdings) to the target schema field
+ * names used by the import logic.  Applied when AI column mapping is unavailable.
+ *
+ * Type-independent aliases (name, institution, lender, etc.)
+ */
+const COLUMN_ALIASES_COMMON = {
+  instrument: 'name',
+  scrip: 'name',
+  security: 'name',
+  stock: 'name',
+  company: 'name',
+  scheme: 'name',
+  fund_name: 'name',
+  description: 'name',
+  bank: 'institution',
+  creditor: 'lender',
+};
+
+/**
+ * Per-import-type aliases for value/cost columns that have different target
+ * field names depending on whether the record is an account, asset, etc.
+ */
+const COLUMN_ALIASES_BY_TYPE = {
+  accounts: {
+    'cur._val': 'balance',
+    cur_val: 'balance',
+    current_value: 'balance',
+    market_value: 'balance',
+    mkt_value: 'balance',
+    portfolio_value: 'balance',
+    present_value: 'balance',
+  },
+  assets: {
+    'cur._val': 'current_value',
+    cur_val: 'current_value',
+    market_value: 'current_value',
+    mkt_value: 'current_value',
+    portfolio_value: 'current_value',
+    present_value: 'current_value',
+    'avg._cost': 'acquisition_cost',
+    avg_cost: 'acquisition_cost',
+    avg_price: 'acquisition_cost',
+    average_cost: 'acquisition_cost',
+    purchase_price: 'acquisition_cost',
+    invested: 'acquisition_cost',
+  },
+  liabilities: {
+    outstanding_balance: 'current_balance',
+    principal_balance: 'current_balance',
+    remaining_balance: 'current_balance',
+    loan_balance: 'current_balance',
+    'avg._cost': 'original_principal',
+    avg_cost: 'original_principal',
+  },
+};
+
+/**
+ * Apply column aliases to a row that has already been key-normalized
+ * (lowercase + underscored).  Explicit schema field names take priority
+ * over aliased columns so that a CSV that already uses the canonical
+ * field names is never overwritten.
+ *
+ * @param {object} normalizedRow - row with lowercase/underscored keys
+ * @param {string} importType    - 'accounts'|'assets'|'liabilities'|'insurance'
+ * @returns {object} row with aliased keys resolved to target field names
+ */
+function applyColumnAliases(normalizedRow, importType) {
+  const aliases = { ...COLUMN_ALIASES_COMMON, ...(COLUMN_ALIASES_BY_TYPE[importType] || {}) };
+  const out = {};
+  // Pass 1: copy columns that are NOT in the alias map (exact schema field names)
+  for (const [k, v] of Object.entries(normalizedRow)) {
+    if (!aliases[k]) out[k] = v;
+  }
+  // Pass 2: apply aliased columns, but never overwrite an already-set field
+  for (const [k, v] of Object.entries(normalizedRow)) {
+    const target = aliases[k];
+    if (target && !(target in out)) out[target] = v;
+  }
+  return out;
+}
+
 function getDefaultCurrency(conn) {
   try {
     const row = conn.prepare('SELECT value FROM settings WHERE key = ?').get('defaultCurrency');
@@ -291,13 +376,10 @@ router.post('/csv', upload.single('file'), (req, res) => {
   const defaultCurrency = getDefaultCurrency(conn);
   const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
 
-  const normalizeKeys = (obj) => {
-    const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k.toLowerCase().replace(/\s+/g, '_')] = v;
-    }
-    return out;
-  };
+  const normalizeKeys = (obj) => applyColumnAliases(
+    Object.fromEntries(Object.entries(obj).map(([k, v]) => [k.toLowerCase().replace(/\s+/g, '_'), v])),
+    importType
+  );
 
   const isDuplicate = (row) => isDuplicateRecord(conn, importType, row);
 
@@ -490,11 +572,10 @@ router.post('/csv/preview', upload.single('file'), async (req, res) => {
       console.error('CSV AI column mapping failed, falling back to key normalization:', aiErr.message);
     }
     mappedRecords = records.map((row) => {
-      const out = {};
-      for (const [k, v] of Object.entries(row)) {
-        out[k.toLowerCase().replace(/\s+/g, '_')] = v;
-      }
-      return out;
+      const normalized = Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [k.toLowerCase().replace(/\s+/g, '_'), v])
+      );
+      return applyColumnAliases(normalized, importType);
     });
     method = 'pattern';
   }

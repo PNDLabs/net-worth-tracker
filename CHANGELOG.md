@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.2] – 2026-05-05
+
+### Fixed
+- **Zerodha holdings CSV: column mapping and duplicate detection** — Zerodha's holdings CSV uses non-standard column headers (`Instrument`, `Avg. cost`, `Cur. val`, etc.) that previously weren't recognised by the pattern-fallback normaliser. This caused every row to be imported with a blank name, which (a) triggered a "name is required" error or inserted invalid records, and (b) made incremental/re-import treat every holding as new rather than a duplicate.
+  - Added a `COLUMN_ALIASES` map (covering `instrument`→`name`, `cur._val`→`balance`/`current_value`, `avg._cost`→`acquisition_cost`, and many more common brokerage column names) applied in the non-AI fallback path in both the backend (`/csv` and `/csv/preview` routes) and the frontend (Capacitor native `importCsv` and `previewCsv`).
+  - Updated the AI CSV column-mapper prompt to explicitly list `Instrument`/`Security`/`Stock` as `name` aliases and to clarify the mapping for Zerodha-specific columns (`Qty.`, `Avg. cost`, `Cur. val`, `P&L`, `Net chg.`, `Day chg.`), preventing the AI from incorrectly mapping them to non-schema fields like `symbol`.
+  - Incremental imports now correctly detect existing holdings as duplicates and offer skip/update options instead of re-importing everything.
+
+---
+
 ## [1.9.1] – 2026-05-05
 
 ### Fixed
