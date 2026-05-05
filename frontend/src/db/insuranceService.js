@@ -178,7 +178,7 @@ export async function createFundAccountFromInsurance(id) {
   return { account: accountRows[0], plan: hydratePlan(planRows[0]) };
 }
 
-
+export async function deleteInsurance(id) {
   await getInsurancePlan(id);
   await run('DELETE FROM insurance_plans WHERE id = ?', [id]);
   return { message: 'Insurance plan deleted' };
