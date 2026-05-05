@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.4] – 2026-05-05
+
+### Changed
+- **Accounts page UX redesign** — the previously flat list of 50+ rows has been reorganised into collapsible type-group sections:
+  - **Grouped by type** — each account type (Brokerage, Checking, Savings, …) is a collapsible section showing a header row with the type badge, account count, and subtotal balance. Groups are sorted by total balance descending. Click a header to collapse or expand that group.
+  - **Type-chip summary strip** — a row of clickable chips above the search bar shows every account type and its count. Clicking a chip filters the table to that type (click again to clear). On mobile the strip scrolls horizontally.
+  - **Kebab ⋮ action menu** — the four-button Actions column (Edit / Delete / + Holding / History) has been replaced with a single `⋮` button that opens a compact dropdown menu. This halves row height and keeps the table readable even on narrow screens.
+  - **Type column removed** — each row no longer repeats the type badge because the group header already provides that context.
+  - **Mobile: institution shown inline** — on screens ≤ 768 px the institution name is shown as a subtitle in the Name cell (the separate Institution column is hidden as before).
+  - **Missing badge colours added** — `money_market`, `cd`, `roth_ira`, and `pension` type badges now have distinct colour styles.
+
+---
+
 ## [1.8.3] – 2026-05-05
 
 ### Fixed
