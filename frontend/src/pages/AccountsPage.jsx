@@ -34,9 +34,11 @@ function ActionMenu({ isInvestment, onEdit, onDelete, onAddHolding, onHistory })
     if (!open) return;
     function handle(e) {
       if (!menuRef.current?.contains(e.target) && !btnRef.current?.contains(e.target)) setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
     }
     document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
+    document.addEventListener('keydown', handle);
+    return () => { document.removeEventListener('mousedown', handle); document.removeEventListener('keydown', handle); };
   }, [open]);
 
   return (
@@ -276,7 +278,12 @@ export default function AccountsPage() {
                         <tr className="account-row">
                           <td className="td-name">
                             {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
-                              <button className="btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); toggleHoldings(acc.id); }} style={{ marginRight: 6 }}>
+                              <button
+                                className="btn-ghost btn-sm"
+                                onClick={(e) => { e.stopPropagation(); toggleHoldings(acc.id); }}
+                                aria-label={expandedId === acc.id ? 'Collapse holdings' : 'Expand holdings'}
+                                style={{ marginRight: 6 }}
+                              >
                                 {expandedId === acc.id ? '▾' : '▸'}
                               </button>
                             )}
