@@ -17,6 +17,7 @@
   --radius: 8px;
   --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
   --transition: 0.15s ease;
+  --color-surface-hover: #eaecef;
   --bottom-nav-height: 58px;
 }
 
@@ -145,12 +146,16 @@ tr:hover td { background: var(--color-surface-2); }
   font-weight: 600;
   text-transform: capitalize;
 }
-.badge-checking  { background: #e3f2fd; color: #1565c0; }
-.badge-savings   { background: #e8f5e9; color: #2e7d32; }
-.badge-brokerage { background: #f3e5f5; color: #6a1b9a; }
-.badge-401k      { background: #fff3e0; color: #e65100; }
-.badge-ira       { background: #fce4ec; color: #880e4f; }
-.badge-other     { background: #eceff1; color: #37474f; }
+.badge-checking     { background: #e3f2fd; color: #1565c0; }
+.badge-savings      { background: #e8f5e9; color: #2e7d32; }
+.badge-money_market { background: #e0f7fa; color: #006064; }
+.badge-cd           { background: #f9fbe7; color: #558b2f; }
+.badge-brokerage    { background: #f3e5f5; color: #6a1b9a; }
+.badge-401k         { background: #fff3e0; color: #e65100; }
+.badge-ira          { background: #fce4ec; color: #880e4f; }
+.badge-roth_ira     { background: #fce4ec; color: #ad1457; }
+.badge-pension      { background: #e8eaf6; color: #283593; }
+.badge-other        { background: #eceff1; color: #37474f; }
 .badge-real_estate { background: #e8eaf6; color: #283593; }
 .badge-vehicle   { background: #e0f2f1; color: #00695c; }
 .badge-crypto    { background: #fff8e1; color: #f57f17; }
@@ -376,3 +381,169 @@ tr:hover td { background: var(--color-surface-2); }
   .page-header .flex-gap { width: 100%; }
 }
 
+/* ─── Type-chip summary strip (Accounts page) ────────────────────────────── */
+.type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 20px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.type-chip:hover { border-color: var(--color-primary); }
+.type-chip.active { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(3,102,214,.15); }
+
+.chip-count {
+  background: var(--color-border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+.type-chip.active .chip-count { background: var(--color-primary); color: #fff; }
+
+/* ─── Accounts grouped table ─────────────────────────────────────────────── */
+.group-header-row {
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-surface-2);
+}
+.group-header-row:hover td { background: var(--color-surface-hover) !important; }
+.group-header-row td { padding: 8px 12px; border-bottom: 2px solid var(--color-border); }
+
+.group-header-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.group-chevron { font-size: 10px; color: var(--color-text-muted); width: 14px; flex-shrink: 0; text-align: center; }
+.group-count   { font-size: 12px; color: var(--color-text-muted); }
+.group-total   { margin-left: auto; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* ─── Kebab action menu ───────────────────────────────────────────────────── */
+.action-menu-btn { padding: 4px 10px; font-size: 16px; line-height: 1; }
+
+.action-menu {
+  position: fixed;          /* escapes table overflow clipping */
+  z-index: 500;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  padding: 4px 0;
+  min-width: 160px;
+}
+.action-menu li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.action-menu li button:hover { background: var(--color-surface-2); }
+.action-menu li button.danger { color: var(--color-danger); }
+
+/* ─── Mobile: show institution inline in name cell ───────────────────────── */
+.show-mobile-only { display: none; }
+.account-institution { font-size: 12px; color: var(--color-text-muted); font-weight: 400; }
+
+@media (max-width: 768px) {
+  /* Show institution subtitle inside the name cell */
+  .show-mobile-only { display: inline; }
+
+  /* Type chips: scroll horizontally instead of wrapping on small screens */
+  .type-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .type-chips::-webkit-scrollbar { display: none; }
+
+  /* ── Accounts page: card layout ── */
+
+  /* No horizontal scroll needed; cards fill the full width */
+  .accounts-table-container { overflow-x: visible; }
+
+  /* Collapse table structure so we can use flex/block layout */
+  .accounts-table,
+  .accounts-table tbody { display: block; width: 100%; }
+
+  /* Hide the column header row — group headers supply context */
+  .accounts-table thead { display: none; }
+
+  /* Group header rows: block, full width (inner is already flex) */
+  .accounts-table tr.group-header-row { display: block; }
+  .accounts-table tr.group-header-row td { display: block; }
+
+  /* Each account row becomes a compact flex card */
+  .accounts-table tr.account-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .accounts-table tr.account-row:hover td { background: transparent; }
+
+  /* Name cell takes all available space */
+  .accounts-table tr.account-row .td-name {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    padding: 0;
+  }
+  .accounts-table tr.account-row .td-name strong {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .accounts-table tr.account-row .td-name .account-institution {
+    display: block;
+    margin-left: 0;
+  }
+  /* Hide the ' · ' separator on mobile (institution is on its own line) */
+  .accounts-table tr.account-row .td-name .institution-sep { display: none; }
+
+  /* Balance cell: compact, right-aligned, no extra padding */
+  .accounts-table tr.account-row .td-balance {
+    padding: 0;
+    white-space: nowrap;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Actions cell: no padding, don't inflate height */
+  .accounts-table tr.account-row .td-actions {
+    padding: 0;
+    flex-shrink: 0;
+  }
+  /* Keep the ⋮ button a comfortable touch target but not huge */
+  .accounts-table .action-menu-btn { min-height: 36px; padding: 4px 10px; }
+
+  /* Expanded holdings / history rows */
+  .accounts-table tr.expand-row { display: block; }
+  .accounts-table tr.expand-row td { display: block; }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../hooks/apiAdapter';
 import { formatCurrency, formatDate, typeLabel } from '../hooks/format';
 import { useCurrency } from '../hooks/CurrencyContext';
@@ -13,6 +13,48 @@ const ACCOUNT_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage',
 const INVESTMENT_ACCOUNT_TYPES = new Set(['money_market', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other']);
 
 const EMPTY_HOLDING = { symbol: '', name: '', shares: '', current_price: '', current_value: '' };
+
+// ─── Kebab action menu ────────────────────────────────────────────────────────
+// Uses position:fixed so it escapes table overflow clipping.
+function ActionMenu({ isInvestment, onEdit, onDelete, onAddHolding, onHistory }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  function toggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+    setOpen((o) => !o);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function handle(e) {
+      if (!menuRef.current?.contains(e.target) && !btnRef.current?.contains(e.target)) setOpen(false);
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handle);
+    document.addEventListener('keydown', handle);
+    return () => { document.removeEventListener('mousedown', handle); document.removeEventListener('keydown', handle); };
+  }, [open]);
+
+  return (
+    <div style={{ display: 'inline-block' }}>
+      <button ref={btnRef} className="btn-ghost btn-sm action-menu-btn" onClick={toggle} title="Actions">⋮</button>
+      {open && (
+        <ul ref={menuRef} className="action-menu" style={{ top: pos.top, right: pos.right }}>
+          <li><button onClick={() => { onEdit(); setOpen(false); }}>✏️ Edit</button></li>
+          {isInvestment && <li><button onClick={() => { onAddHolding(); setOpen(false); }}>📊 Add Holding</button></li>}
+          <li><button onClick={() => { onHistory(); setOpen(false); }}>📈 History</button></li>
+          <li><button className="danger" onClick={() => { onDelete(); setOpen(false); }}>🗑️ Delete</button></li>
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([]);
@@ -32,6 +74,8 @@ export default function AccountsPage() {
   const [filterType, setFilterType] = useState('');
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
+  // Set of type keys whose group rows are collapsed; empty = all expanded
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
   const { currency } = useCurrency();
   const fmt = (v) => formatCurrency(v, currency);
 
@@ -45,6 +89,15 @@ export default function AccountsPage() {
     return <span style={{ marginLeft: 4 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
+  function toggleGroup(type) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  }
+
+  // Accounts after search / type filter, sorted by chosen column
   const visibleAccounts = accounts
     .filter((a) => {
       const q = filterText.toLowerCase();
@@ -61,6 +114,21 @@ export default function AccountsPage() {
       if (av > bv) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
+
+  // Group visible accounts by type, groups sorted by total balance descending
+  const groupedAccounts = (() => {
+    const map = {};
+    for (const acc of visibleAccounts) {
+      if (!map[acc.type]) map[acc.type] = [];
+      map[acc.type].push(acc);
+    }
+    return Object.entries(map)
+      .map(([type, accs]) => ({ type, accounts: accs, total: accs.reduce((s, a) => s + Number(a.balance || 0), 0) }))
+      .sort((a, b) => b.total - a.total);
+  })();
+
+  // Per-type count across all accounts (not just filtered) for the chip strip
+  const typeCounts = accounts.reduce((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {});
 
   const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', notes: '' });
 
@@ -137,6 +205,21 @@ export default function AccountsPage() {
         </div>
       ) : (
         <div className="card">
+          {/* ── Type-chip summary strip ── */}
+          <div className="type-chips">
+            {ACCOUNT_TYPES.filter((t) => typeCounts[t]).map((t) => (
+              <button
+                key={t}
+                className={`type-chip${filterType === t ? ' active' : ''}`}
+                onClick={() => setFilterType(filterType === t ? '' : t)}
+              >
+                <span className={`badge badge-${t}`}>{typeLabel(t)}</span>
+                <span className="chip-count">{typeCounts[t]}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Search / filter bar ── */}
           <div className="flex-gap" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
             <input
               placeholder="Search name or institution…"
@@ -159,111 +242,137 @@ export default function AccountsPage() {
               {visibleAccounts.length} of {accounts.length}
             </span>
           </div>
-          <div className="table-container">
-            <table>
+
+          {/* ── Grouped accounts table ── */}
+          <div className="table-container accounts-table-container">
+            <table className="accounts-table">
               <thead>
                 <tr>
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>Name<SortIcon col="name" /></th>
                   <th className="hide-mobile" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('institution')}>Institution<SortIcon col="institution" /></th>
-                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('type')}>Type<SortIcon col="type" /></th>
                   <th className="hide-mobile">Currency</th>
                   <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('balance')}>Balance<SortIcon col="balance" /></th>
-                  <th>Actions</th>
+                  <th style={{ width: 40 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {visibleAccounts.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 24 }}>No accounts match the current filters.</td></tr>
-                ) : visibleAccounts.map((acc) => (
-                  <>
-                    <tr key={acc.id}>
-                      <td>
-                        {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
-                          <button className="btn-ghost btn-sm" onClick={() => toggleHoldings(acc.id)} style={{ marginRight: 6 }}>
-                            {expandedId === acc.id ? '▾' : '▸'}
-                          </button>
-                        )}
-                        <strong>{acc.name}</strong>
-                      </td>
-                      <td className="hide-mobile">{acc.institution || '—'}</td>
-                      <td><span className={`badge badge-${acc.type}`}>{typeLabel(acc.type)}</span></td>
-                      <td className="hide-mobile">{acc.currency}</td>
-                      <td className="amount" style={{ textAlign: 'right' }}>{fmt(acc.balance)}</td>
-                      <td>
-                        <div className="flex-gap">
-                          <button className="btn-ghost btn-sm" onClick={() => openEdit(acc)}>Edit</button>
-                          <button className="btn-danger btn-sm" onClick={() => remove(acc.id)}>Delete</button>
-                          {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
-                            <button className="btn-ghost btn-sm" onClick={() => { setHoldingAccountId(acc.id); setHoldingForm(EMPTY_HOLDING); setShowHoldingModal(true); }}>+ Holding</button>
-                          )}
-                          <button className="btn-ghost btn-sm" onClick={() => toggleHistory(acc.id)}>📈 History</button>
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 24 }}>No accounts match the current filters.</td></tr>
+                ) : groupedAccounts.map(({ type, accounts: groupAccs, total }) => (
+                  <Fragment key={type}>
+                    {/* Group header row – click to collapse/expand */}
+                    <tr className="group-header-row" onClick={() => toggleGroup(type)}>
+                      <td colSpan={5}>
+                        <div className="group-header-inner">
+                          <span className="group-chevron">{collapsedGroups.has(type) ? '▶' : '▼'}</span>
+                          <span className={`badge badge-${type}`}>{typeLabel(type)}</span>
+                          <span className="group-count">{groupAccs.length} account{groupAccs.length !== 1 ? 's' : ''}</span>
+                          <span className="group-total">{fmt(total)}</span>
                         </div>
                       </td>
                     </tr>
-                    {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && expandedId === acc.id && (
-                      <tr key={`h-${acc.id}`}>
-                        <td colSpan={6} style={{ padding: '0 24px 12px', background: 'var(--color-surface-2)' }}>
-                          {holdings[acc.id]?.length > 0 ? (
-                            <table style={{ marginTop: 8 }}>
-                              <thead><tr><th>Symbol</th><th>Name</th><th>Shares</th><th style={{ textAlign: 'right' }}>Price</th><th style={{ textAlign: 'right' }}>Value</th></tr></thead>
-                              <tbody>
-                                {holdings[acc.id].map((h) => (
-                                  <tr key={h.id}>
-                                    <td><strong>{h.symbol}</strong></td>
-                                    <td>{h.name || '—'}</td>
-                                    <td>{h.shares}</td>
-                                    <td style={{ textAlign: 'right' }}>{h.current_price ? fmt(h.current_price) : '—'}</td>
-                                    <td style={{ textAlign: 'right' }} className="amount positive">{fmt(h.current_value || h.shares * (h.current_price || 0))}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          ) : <p style={{ padding: '8px 0', color: 'var(--color-text-muted)' }}>No holdings. Click "+ Holding" to add investment positions.</p>}
-                        </td>
-                      </tr>
-                    )}
-                    {historyId === acc.id && (
-                      <tr key={`vh-${acc.id}`}>
-                        <td colSpan={6} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
-                          {(() => {
-                            const d = historyData[acc.id];
-                            if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
-                            const g = d.growth;
-                            return (
-                              <>
-                                {g && g.data_points > 0 && (
-                                  <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
-                                    <span>First: <strong>{fmt(g.first_value)}</strong> ({formatDate(g.first_date)})</span>
-                                    <span>Latest: <strong>{fmt(g.latest_value)}</strong> ({formatDate(g.latest_date)})</span>
-                                    <span style={{ color: g.absolute_change >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                      Change: <strong>{g.absolute_change >= 0 ? '+' : ''}{fmt(g.absolute_change)}</strong>
-                                      {g.percent_change != null && <> ({g.percent_change >= 0 ? '+' : ''}{g.percent_change}%)</>}
-                                    </span>
-                                    <span>Data points: <strong>{g.data_points}</strong></span>
-                                  </div>
-                                )}
-                                {d.hist.length > 1 ? (
-                                  <ResponsiveContainer width="100%" height={180}>
-                                    <LineChart data={d.hist} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-                                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                                      <XAxis dataKey="recorded_at" tick={{ fontSize: 10 }} />
-                                      <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 10 }} />
-                                      <Tooltip formatter={(v) => fmt(v)} />
-                                      <Line type="monotone" dataKey="value" name="Balance" stroke="#0366d6" strokeWidth={2} dot />
-                                    </LineChart>
-                                  </ResponsiveContainer>
-                                ) : d.hist.length === 1 ? (
-                                  <p style={{ color: 'var(--color-text-muted)' }}>Only one data point recorded. Update the balance to see a trend.</p>
-                                ) : (
-                                  <p style={{ color: 'var(--color-text-muted)' }}>No history recorded yet.</p>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </td>
-                      </tr>
-                    )}
-                  </>
+
+                    {/* Account rows – hidden when group is collapsed */}
+                    {!collapsedGroups.has(type) && groupAccs.map((acc) => (
+                      <Fragment key={acc.id}>
+                        <tr className="account-row">
+                          <td className="td-name">
+                            {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && (
+                              <button
+                                className="btn-ghost btn-sm"
+                                onClick={(e) => { e.stopPropagation(); toggleHoldings(acc.id); }}
+                                aria-label={expandedId === acc.id ? 'Collapse holdings' : 'Expand holdings'}
+                                style={{ marginRight: 6 }}
+                              >
+                                {expandedId === acc.id ? '▾' : '▸'}
+                              </button>
+                            )}
+                            <strong>{acc.name}</strong>
+                            {acc.institution && <span className="show-mobile-only account-institution"><span className="institution-sep"> · </span>{acc.institution}</span>}
+                          </td>
+                          <td className="hide-mobile">{acc.institution || '—'}</td>
+                          <td className="hide-mobile">{acc.currency}</td>
+                          <td className="td-balance amount" style={{ textAlign: 'right' }}>{fmt(acc.balance)}</td>
+                          <td className="td-actions">
+                            <ActionMenu
+                              isInvestment={INVESTMENT_ACCOUNT_TYPES.has(acc.type)}
+                              onEdit={() => openEdit(acc)}
+                              onDelete={() => remove(acc.id)}
+                              onAddHolding={() => { setHoldingAccountId(acc.id); setHoldingForm(EMPTY_HOLDING); setShowHoldingModal(true); }}
+                              onHistory={() => toggleHistory(acc.id)}
+                            />
+                          </td>
+                        </tr>
+
+                        {/* Holdings expanded row */}
+                        {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && expandedId === acc.id && (
+                          <tr className="expand-row">
+                            <td colSpan={5} style={{ padding: '0 24px 12px', background: 'var(--color-surface-2)' }}>
+                              {holdings[acc.id]?.length > 0 ? (
+                                <table style={{ marginTop: 8 }}>
+                                  <thead><tr><th>Symbol</th><th>Name</th><th>Shares</th><th style={{ textAlign: 'right' }}>Price</th><th style={{ textAlign: 'right' }}>Value</th></tr></thead>
+                                  <tbody>
+                                    {holdings[acc.id].map((h) => (
+                                      <tr key={h.id}>
+                                        <td><strong>{h.symbol}</strong></td>
+                                        <td>{h.name || '—'}</td>
+                                        <td>{h.shares}</td>
+                                        <td style={{ textAlign: 'right' }}>{h.current_price ? fmt(h.current_price) : '—'}</td>
+                                        <td style={{ textAlign: 'right' }} className="amount positive">{fmt(h.current_value || h.shares * (h.current_price || 0))}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : <p style={{ padding: '8px 0', color: 'var(--color-text-muted)' }}>No holdings. Use the ⋮ menu → "Add Holding" to add investment positions.</p>}
+                            </td>
+                          </tr>
+                        )}
+
+                        {/* History expanded row */}
+                        {historyId === acc.id && (
+                          <tr className="expand-row">
+                            <td colSpan={5} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                              {(() => {
+                                const d = historyData[acc.id];
+                                if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
+                                const g = d.growth;
+                                return (
+                                  <>
+                                    {g && g.data_points > 0 && (
+                                      <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
+                                        <span>First: <strong>{fmt(g.first_value)}</strong> ({formatDate(g.first_date)})</span>
+                                        <span>Latest: <strong>{fmt(g.latest_value)}</strong> ({formatDate(g.latest_date)})</span>
+                                        <span style={{ color: g.absolute_change >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                          Change: <strong>{g.absolute_change >= 0 ? '+' : ''}{fmt(g.absolute_change)}</strong>
+                                          {g.percent_change != null && <> ({g.percent_change >= 0 ? '+' : ''}{g.percent_change}%)</>}
+                                        </span>
+                                        <span>Data points: <strong>{g.data_points}</strong></span>
+                                      </div>
+                                    )}
+                                    {d.hist.length > 1 ? (
+                                      <ResponsiveContainer width="100%" height={180}>
+                                        <LineChart data={d.hist} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                                          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                                          <XAxis dataKey="recorded_at" tick={{ fontSize: 10 }} />
+                                          <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 10 }} />
+                                          <Tooltip formatter={(v) => fmt(v)} />
+                                          <Line type="monotone" dataKey="value" name="Balance" stroke="#0366d6" strokeWidth={2} dot />
+                                        </LineChart>
+                                      </ResponsiveContainer>
+                                    ) : d.hist.length === 1 ? (
+                                      <p style={{ color: 'var(--color-text-muted)' }}>Only one data point recorded. Update the balance to see a trend.</p>
+                                    ) : (
+                                      <p style={{ color: 'var(--color-text-muted)' }}>No history recorded yet.</p>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
