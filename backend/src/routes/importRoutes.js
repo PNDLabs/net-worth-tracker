@@ -822,13 +822,13 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             minimum_payment != null ? Number(minimum_payment) : null
           );
         } else if (importType === 'insurance') {
-          const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+          const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
           if (!name) throw new Error('name is required');
           const covJson = covered_conditions != null
             ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
             : null;
-          conn.prepare(
-            `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          const insResult = conn.prepare(
+            `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             String(name), provider ? String(provider) : null, String(type),
             policy_number ? String(policy_number) : null,
@@ -841,8 +841,33 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
             notes ? String(notes) : null,
             terms ? String(terms) : null,
             covJson,
-            insured_name ? String(insured_name) : null
+            insured_name ? String(insured_name) : null,
+            fund_value != null ? Number(fund_value) : null
           );
+          const planId = insResult.lastInsertRowid;
+          conn.prepare(
+            `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+             VALUES ('insurance', ?, ?, date('now'), 'import')`
+          ).run(planId, premium_amount != null ? Number(premium_amount) : 0);
+
+          // Auto-create a linked brokerage account so the fund value is
+          // immediately visible in net worth without any extra manual step.
+          if (fund_value != null && Number(fund_value) > 0) {
+            const accountName = `${String(name)} – Fund`;
+            const existingAcc = conn.prepare(`SELECT id FROM accounts WHERE lower(name)=lower(?)`).get(accountName);
+            if (!existingAcc) {
+              const accResult = conn.prepare(
+                `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`
+              ).run(accountName, provider ? String(provider) : null, defaultCurrency || 'USD', Number(fund_value));
+              conn.prepare(
+                `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+                 VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`
+              ).run(accResult.lastInsertRowid, Number(fund_value));
+              conn.prepare(
+                `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`
+              ).run(accResult.lastInsertRowid, planId);
+            }
+          }
         }
         results.imported++;
       } catch (err) {
