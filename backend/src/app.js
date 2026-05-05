@@ -14,26 +14,29 @@ const valueHistoryRouter = require('./routes/valueHistory');
 const metalsRouter = require('./routes/metals');
 const db = require('./db/database');
 
-// Standard limiter: 300 requests per minute for read/write endpoints
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-});
-
-// Tighter limiter for import endpoints: 30 imports per minute
-const importLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many import requests, please try again later.' },
-});
-
 function createApp() {
   const app = express();
+
+  // Rate limiters are created per app instance so that test suites using
+  // createApp() get independent counters and don't trip each other's limits.
+
+  // Standard limiter: 300 requests per minute for read/write endpoints
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' },
+  });
+
+  // Tighter limiter for import endpoints: 30 imports per minute
+  const importLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many import requests, please try again later.' },
+  });
 
   // Trust the immediate upstream proxy (nginx). Required so express-rate-limit
   // can correctly identify clients via X-Forwarded-For. Safe because port 3001

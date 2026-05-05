@@ -322,6 +322,137 @@ Car Loan,Toyota Finance,auto,25000,20000,4.9`;
     const res = await request(app).post('/api/import/json').send({ import_type: 'accounts', records: [] });
     expect(res.status).toBe(400);
   });
+
+  test('POST /api/import/json - skips duplicate account by default', async () => {
+    await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Dup Account', type: 'savings', balance: 1000 }],
+    });
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Dup Account', type: 'savings', balance: 2000 }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(0);
+    expect(res.body.duplicates).toBe(1);
+    // Balance should still be original value
+    const list = await request(app).get('/api/accounts');
+    expect(list.body.find((a) => a.name === 'Dup Account').balance).toBe(1000);
+  });
+
+  test('POST /api/import/json - _updateExisting updates record and records history', async () => {
+    // Create the initial account
+    await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Monthly Savings', institution: 'BankA', type: 'savings', balance: 5000 }],
+    });
+
+    // Import again with _updateExisting
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Monthly Savings', institution: 'BankA', type: 'savings', balance: 5500, _updateExisting: true }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(1);
+    expect(res.body.imported).toBe(0);
+    expect(res.body.duplicates).toBe(0);
+
+    // Balance should be updated
+    const list = await request(app).get('/api/accounts');
+    const acct = list.body.find((a) => a.name === 'Monthly Savings');
+    expect(acct.balance).toBe(5500);
+
+    // value_history should contain the old balance
+    const hist = await request(app).get(`/api/value-history?entity_type=account&entity_id=${acct.id}`);
+    expect(hist.status).toBe(200);
+    const importEntry = hist.body.find((h) => h.notes === 'import update');
+    expect(importEntry).toBeDefined();
+    expect(importEntry.value).toBe(5000);
+  });
+
+  test('POST /api/import/json - _updateExisting for assets records history', async () => {
+    await request(app).post('/api/import/json').send({
+      import_type: 'assets',
+      records: [{ name: 'My Home', category: 'real_estate', current_value: 300000 }],
+    });
+
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'assets',
+      records: [{ name: 'My Home', category: 'real_estate', current_value: 320000, _updateExisting: true }],
+    });
+    expect(res.body.updated).toBe(1);
+
+    const list = await request(app).get('/api/assets');
+    const asset = list.body.find((a) => a.name === 'My Home');
+    expect(asset.current_value).toBe(320000);
+
+    const hist = await request(app).get(`/api/value-history?entity_type=asset&entity_id=${asset.id}`);
+    const entry = hist.body.find((h) => h.notes === 'import update');
+    expect(entry).toBeDefined();
+    expect(entry.value).toBe(300000);
+  });
+
+  test('POST /api/import/json - _updateExisting for liabilities records history', async () => {
+    await request(app).post('/api/import/json').send({
+      import_type: 'liabilities',
+      records: [{ name: 'Car Loan', lender: 'AutoBank', type: 'auto', current_balance: 20000 }],
+    });
+
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'liabilities',
+      records: [{ name: 'Car Loan', lender: 'AutoBank', type: 'auto', current_balance: 18000, _updateExisting: true }],
+    });
+    expect(res.body.updated).toBe(1);
+
+    const list = await request(app).get('/api/liabilities');
+    const liab = list.body.find((l) => l.name === 'Car Loan');
+    expect(liab.current_balance).toBe(18000);
+
+    const hist = await request(app).get(`/api/value-history?entity_type=liability&entity_id=${liab.id}`);
+    const entry = hist.body.find((h) => h.notes === 'import update');
+    expect(entry).toBeDefined();
+    expect(entry.value).toBe(20000);
+  });
+
+  test('POST /api/import/json - _updateExisting for insurance records history', async () => {
+    await request(app).post('/api/import/json').send({
+      import_type: 'insurance',
+      records: [{ name: 'Life Policy', provider: 'Insurer A', type: 'life', premium_amount: 200 }],
+    });
+
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'insurance',
+      records: [{ name: 'Life Policy', provider: 'Insurer A', type: 'life', premium_amount: 220, _updateExisting: true }],
+    });
+    expect(res.body.updated).toBe(1);
+
+    const list = await request(app).get('/api/insurance');
+    const plan = list.body.find((p) => p.name === 'Life Policy');
+    expect(plan.premium_amount).toBe(220);
+
+    const hist = await request(app).get(`/api/value-history?entity_type=insurance&entity_id=${plan.id}`);
+    const entry = hist.body.find((h) => h.notes === 'import update');
+    expect(entry).toBeDefined();
+    expect(entry.value).toBe(200);
+  });
+
+  test('POST /api/import/json - _updateExisting does not zero balance when field missing', async () => {
+    await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Safe Account', type: 'savings', balance: 9000 }],
+    });
+
+    // Import update without providing balance
+    const res = await request(app).post('/api/import/json').send({
+      import_type: 'accounts',
+      records: [{ name: 'Safe Account', type: 'savings', _updateExisting: true }],
+    });
+    expect(res.body.updated).toBe(1);
+
+    const list = await request(app).get('/api/accounts');
+    const acct = list.body.find((a) => a.name === 'Safe Account');
+    expect(acct.balance).toBe(9000); // balance preserved, not zeroed
+  });
 });
 
 // ─── Health ───────────────────────────────────────────────────────────────────
