@@ -24,6 +24,8 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [importType, setImportType] = useState(preview.import_type);
   const validationNotes = preview.validation_notes || [];
   const [duplicateIndices, setDuplicateIndices] = useState(new Set());
+  // Indices of rows that are duplicates of an earlier row within the same imported file.
+  const [withinBatchIndices, setWithinBatchIndices] = useState(new Set());
   // Map of index → 'skip' | 'create' | 'update'
   const [duplicateActions, setDuplicateActions] = useState(new Map());
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
@@ -32,8 +34,11 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
 
   useEffect(() => {
     if (!preview.records || preview.records.length === 0) return;
-    if (dupCacheRef[importType] !== undefined) {
-      setDuplicateIndices(dupCacheRef[importType]);
+    const cached = dupCacheRef[importType];
+    // Guard: only use the cache if it has the expected shape (dbDups + batchDups Sets).
+    if (cached && cached.dbDups instanceof Set && cached.batchDups instanceof Set) {
+      setDuplicateIndices(cached.dbDups);
+      setWithinBatchIndices(cached.batchDups);
       setDuplicateActions(new Map());
       return;
     }
@@ -42,13 +47,20 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     setDuplicateActions(new Map());
     api.checkDuplicates(importType, preview.records)
       .then((res) => {
-        const result = new Set(res.duplicates || []);
-        dupCacheRef[importType] = result;
-        if (!cancelled) setDuplicateIndices(result);
+        const dbDups = new Set(res.duplicates || []);
+        const batchDups = new Set(res.withinBatch || []);
+        dupCacheRef[importType] = { dbDups, batchDups };
+        if (!cancelled) {
+          setDuplicateIndices(dbDups);
+          setWithinBatchIndices(batchDups);
+        }
       })
       .catch(() => {
-        dupCacheRef[importType] = new Set();
-        if (!cancelled) setDuplicateIndices(new Set());
+        dupCacheRef[importType] = { dbDups: new Set(), batchDups: new Set() };
+        if (!cancelled) {
+          setDuplicateIndices(new Set());
+          setWithinBatchIndices(new Set());
+        }
       })
       .finally(() => { if (!cancelled) setCheckingDuplicates(false); });
     return () => { cancelled = true; };
@@ -63,14 +75,25 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   };
 
   const handleConfirm = () => {
-    const finalRecords = preview.records.map((r, i) => {
+    const finalRecords = [];
+    for (let i = 0; i < preview.records.length; i++) {
+      const r = preview.records[i];
       const action = duplicateActions.get(i);
-      if (action === 'create') return { ...r, _forceImport: true };
-      if (action === 'update') return { ...r, _updateExisting: true };
-      return r;
-    });
+      const isBatchDup = withinBatchIndices.has(i);
+      // Within-batch dups default to skipped — filter them out of the payload entirely.
+      if (isBatchDup && (!action || action === 'skip')) continue;
+      if (action === 'create') {
+        finalRecords.push({ ...r, _forceImport: true });
+      } else if (action === 'update') {
+        finalRecords.push({ ...r, _updateExisting: true });
+      } else {
+        finalRecords.push(r);
+      }
+    }
     onConfirm(importType, finalRecords);
   };
+
+  const anyDups = duplicateIndices.size > 0 || withinBatchIndices.size > 0;
 
   if (!preview) return null;
   return (
@@ -108,18 +131,31 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         </div>
       )}
 
-      {!checkingDuplicates && duplicateIndices.size > 0 && (
-        <div style={{ padding: '10px 14px', borderRadius: 6, fontSize: 13, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 12 }}>
-          ⚠️ <strong>{duplicateIndices.size}</strong> record(s) appear to already exist (matching name was found).
-          For each duplicate row choose: <strong>Skip</strong> (default), <strong>Create new</strong>, or <strong>Update existing</strong> (updates current value and saves old value to history).
-        </div>
-      )}
+      {(() => {
+        const bannerBase = { padding: '10px 14px', borderRadius: 6, fontSize: 13 };
+        return (
+          <>
+            {!checkingDuplicates && duplicateIndices.size > 0 && (
+              <div style={{ ...bannerBase, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 8 }}>
+                ⚠️ <strong>{duplicateIndices.size}</strong> record(s) already exist in the database.
+                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), or <strong>Create new</strong>.
+              </div>
+            )}
+            {!checkingDuplicates && withinBatchIndices.size > 0 && (
+              <div style={{ ...bannerBase, background: '#f3e5f5', color: '#6a1b9a', border: '1px solid #ce93d8', marginBottom: 12 }}>
+                📋 <strong>{withinBatchIndices.size}</strong> record(s) appear more than once in this file (in-file duplicates — e.g. a summary and a detail row for the same account).
+                The later occurrence(s) default to <strong>Skip</strong>. Choose <strong>Keep this one</strong> to import anyway.
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       <div className="table-container" style={{ marginBottom: 16, maxHeight: 300, overflowY: 'auto' }}>
         <table>
           <thead>
             <tr>
-              {duplicateIndices.size > 0 && <th style={{ whiteSpace: 'nowrap' }}>Status</th>}
+              {anyDups && <th style={{ whiteSpace: 'nowrap' }}>Status</th>}
               {Object.keys(preview.records[0] || {}).map((k) => (
                 <th key={k}>{k.replace(/_/g, ' ')}</th>
               ))}
@@ -128,18 +164,47 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
           <tbody>
             {preview.records.map((r, i) => {
               const isDup = duplicateIndices.has(i);
+              const isBatchDup = withinBatchIndices.has(i);
               const action = duplicateActions.get(i) || 'skip';
-              const rowStyle = isDup ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' } : {};
+              const rowStyle = isDup
+                ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' }
+                : isBatchDup
+                ? { background: action === 'create' ? '#e3f2fd' : '#f3e5f5' }
+                : {};
               return (
                 <tr key={i} style={rowStyle}>
-                  {duplicateIndices.size > 0 && (
+                  {anyDups && (
                     <td style={{ whiteSpace: 'nowrap', minWidth: 160 }}>
                       {isDup ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {isBatchDup && (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 also in-file dup</span>
+                          )}
                           {[
                             { value: 'skip', label: '⏭ Skip', color: '#e65100' },
                             { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
                             { value: 'create', label: '➕ Create new', color: '#1565c0' },
+                          ].map((opt) => (
+                            <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                              <input
+                                type="radio"
+                                name={`dup-action-${i}`}
+                                value={opt.value}
+                                checked={action === opt.value}
+                                onChange={() => setAction(i, opt.value)}
+                              />
+                              <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
+                                {opt.label}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : isBatchDup ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 In-file duplicate</span>
+                          {[
+                            { value: 'skip', label: '⏭ Skip (keep first)', color: '#e65100' },
+                            { value: 'create', label: '➕ Keep this one', color: '#1565c0' },
                           ].map((opt) => (
                             <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
                               <input

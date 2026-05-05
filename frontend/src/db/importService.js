@@ -27,6 +27,19 @@ async function readDefaultCurrency() {
 
 // ─── Duplicate detection (mirrors importRoutes.js) ───────────────────────────
 
+/**
+ * Returns a string key that uniquely identifies a record's natural key within a batch.
+ * Mirrors the getBatchKey helper in importRoutes.js.
+ */
+function getBatchKey(importType, row) {
+  const n = String(row.name || '').toLowerCase().trim();
+  if (importType === 'accounts') return `${n}|${String(row.institution || '').toLowerCase().trim()}`;
+  if (importType === 'assets') return n;
+  if (importType === 'liabilities') return `${n}|${String(row.lender || '').toLowerCase().trim()}`;
+  if (importType === 'insurance') return `${n}|${String(row.provider || '').toLowerCase().trim()}|${String(row.insured_name || '').toLowerCase().trim()}`;
+  return n;
+}
+
 async function getExistingRecord(importType, row) {
   const name = String(row.name || '');
   if (importType === 'accounts') {
@@ -62,17 +75,28 @@ async function isDuplicateRecord(importType, row) {
 }
 
 /**
- * Check which records (by index) are duplicates in the local SQLite DB.
- * Returns { duplicates: [index, ...] }.
+ * Check which records (by index) are duplicates in the local SQLite DB or within the batch.
+ * Returns { duplicates: [index, ...], withinBatch: [index, ...] }.
+ *   duplicates  – indices of records already present in the DB.
+ *   withinBatch – indices of records that are duplicates of an earlier row in the same
+ *                 batch (in-file duplicates, e.g. a summary and a detail line in one file).
  */
 export async function checkDuplicates(importType, records) {
   const duplicates = [];
+  const withinBatch = [];
+  const seenKeys = new Set();
   for (let i = 0; i < records.length; i++) {
+    const key = getBatchKey(importType, records[i]);
+    if (seenKeys.has(key)) {
+      withinBatch.push(i);
+    } else {
+      seenKeys.add(key);
+    }
     if (await getExistingRecord(importType, records[i])) {
       duplicates.push(i);
     }
   }
-  return { duplicates };
+  return { duplicates, withinBatch };
 }
 
 // ─── Single-row update (mirrors importRoutes.js updateExistingRecord) ─────────
