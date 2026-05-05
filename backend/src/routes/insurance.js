@@ -142,7 +142,7 @@ router.post('/', (req, res) => {
     name, provider, type = 'other', policy_number,
     premium_amount, premium_frequency = 'monthly', coverage_amount,
     start_date, end_date, renewal_date, notes,
-    terms, covered_conditions, insured_name,
+    terms, covered_conditions, insured_name, fund_value,
   } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -167,8 +167,8 @@ router.post('/', (req, res) => {
     `INSERT INTO insurance_plans
        (name, provider, type, policy_number, premium_amount, premium_frequency,
         coverage_amount, start_date, end_date, renewal_date, notes,
-        terms, covered_conditions, insured_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        terms, covered_conditions, insured_name, fund_value)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     name,
     provider || null,
@@ -184,6 +184,7 @@ router.post('/', (req, res) => {
     terms || null,
     covJson,
     insured_name || null,
+    fund_value != null ? Number(fund_value) : null,
   );
 
   const plan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(result.lastInsertRowid);
@@ -235,7 +236,7 @@ router.put('/:id', (req, res) => {
     name, provider, type, policy_number,
     premium_amount, premium_frequency, coverage_amount,
     start_date, end_date, renewal_date, notes,
-    terms, covered_conditions, insured_name,
+    terms, covered_conditions, insured_name, fund_value,
   } = req.body;
 
   const updated = {
@@ -255,6 +256,7 @@ router.put('/:id', (req, res) => {
       ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
       : existing.covered_conditions,
     insured_name:      insured_name      !== undefined ? insured_name      : existing.insured_name,
+    fund_value:        fund_value        !== undefined ? (fund_value != null ? Number(fund_value) : null) : existing.fund_value,
   };
 
   if (!updated.name) return res.status(400).json({ error: 'name is required' });
@@ -270,15 +272,31 @@ router.put('/:id', (req, res) => {
      SET name=?, provider=?, type=?, policy_number=?, premium_amount=?,
          premium_frequency=?, coverage_amount=?, start_date=?, end_date=?,
          renewal_date=?, notes=?, terms=?, covered_conditions=?, insured_name=?,
-         updated_at=datetime('now')
+         fund_value=?, updated_at=datetime('now')
      WHERE id=?`
   ).run(
     updated.name, updated.provider, updated.type, updated.policy_number,
     updated.premium_amount, updated.premium_frequency, updated.coverage_amount,
     updated.start_date, updated.end_date, updated.renewal_date, updated.notes,
     updated.terms, updated.covered_conditions, updated.insured_name,
+    updated.fund_value,
     req.params.id,
   );
+
+  // If fund_value changed and a linked account exists, keep it in sync.
+  if (
+    fund_value !== undefined &&
+    updated.fund_value != null &&
+    existing.linked_account_id
+  ) {
+    conn.prepare(
+      `UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`
+    ).run(updated.fund_value, existing.linked_account_id);
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+       VALUES ('account', ?, ?, date('now'), 'insurance fund value update')`
+    ).run(existing.linked_account_id, updated.fund_value);
+  }
 
   const plan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(req.params.id);
   res.json(hydratePlan(plan));
@@ -339,6 +357,55 @@ router.post('/:id/create-asset', (req, res) => {
 
   const updatedPlan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(plan.id);
   res.status(201).json({ asset, plan: hydratePlan(updatedPlan) });
+});
+
+// ── POST /api/insurance/:id/create-fund-account ───────────────────────────────
+// Creates a brokerage account from a market-linked insurance plan's fund value
+// and links it back via linked_account_id.  The linked account balance counts
+// towards net worth and is kept in sync when fund_value is updated.
+
+router.post('/:id/create-fund-account', (req, res) => {
+  const conn = db.getDb();
+  const plan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(req.params.id);
+  if (!plan) return res.status(404).json({ error: 'Insurance plan not found' });
+
+  if (plan.fund_value == null || plan.fund_value <= 0) {
+    return res.status(400).json({ error: 'The insurance plan must have a fund_value to create a linked fund account' });
+  }
+
+  const accountName = `${plan.name} – Fund`;
+
+  const existing = conn.prepare(`SELECT * FROM accounts WHERE lower(name) = lower(?)`).get(accountName);
+  if (existing) {
+    return res.status(409).json({
+      error: `A fund account named "${accountName}" already exists`,
+      account: existing,
+    });
+  }
+
+  // Detect the default currency from settings (best-effort)
+  let currency = 'USD';
+  try {
+    const row = conn.prepare(`SELECT value FROM settings WHERE key = 'defaultCurrency'`).get();
+    if (row) currency = JSON.parse(row.value) || 'USD';
+  } catch (_) {}
+
+  const acctResult = conn.prepare(
+    `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`
+  ).run(accountName, plan.provider || null, currency, plan.fund_value);
+  const account = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(acctResult.lastInsertRowid);
+
+  conn.prepare(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+     VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`
+  ).run(account.id, account.balance);
+
+  conn.prepare(
+    `UPDATE insurance_plans SET linked_account_id=?, updated_at=datetime('now') WHERE id=?`
+  ).run(account.id, plan.id);
+
+  const updatedPlan = conn.prepare('SELECT * FROM insurance_plans WHERE id = ?').get(plan.id);
+  res.status(201).json({ account, plan: hydratePlan(updatedPlan) });
 });
 
 // ── DELETE /api/insurance/:id ──────────────────────────────────────────────────

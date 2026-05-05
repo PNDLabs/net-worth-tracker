@@ -31,7 +31,9 @@ For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
 For "insurance" records use:
-{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "insured_name": string|null }
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "fund_value": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "insured_name": string|null }
+- "coverage_amount": The death benefit / sum assured (pure insurance payout) stated in the document.
+- "fund_value": The current market/fund value of the investment component. Populate this for market-linked policies (ULIP, endowment, money-back, whole-life with unit-linked component) where the document shows a separate fund/NAV value or unit balance value. Use null for pure-protection plans (term life, health, auto, etc.) that have no investment component.
 - "insured_name": The name of the person(s) insured / policy holder as stated in the document (e.g. "John Smith"). Use null if not found.
 
 Rules:
@@ -43,6 +45,7 @@ Rules:
 - For investment/brokerage accounts include the total value as the balance.
 - FD (Fixed Deposit) accounts should use type "cd" in accounts records.
 - Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
+- For market-linked insurance policies (ULIP, endowment, money-back, whole-life with investment component): classify as import_type="insurance". Set coverage_amount to the death benefit/sum assured and set fund_value to the current market/fund value of the investment units. Both values can coexist on a single insurance record.
 - For CAS (Consolidated Account Statement) documents that list multiple mutual fund scheme portfolios: return each scheme as an "accounts" record with type="brokerage", balance=current market value, institution=AMC name, and use import_type="accounts".
 - For mutual fund / SIP transaction statements: treat each fund scheme as an "accounts" record with type="brokerage" and balance=current market value or total invested amount.
 - When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.`;
@@ -68,6 +71,7 @@ Rules:
 - validation_notes must be an array of short human-readable strings, one entry per change made. If no changes were needed, return an empty array [].
 - Convert all monetary values to plain positive numbers (no $ or ₹ signs, no commas, no negative signs).
 - Liabilities current_balance must always be a positive number.
+- For insurance records: if "fund_value" is null but the raw text shows a current fund/unit/NAV value for a market-linked policy (ULIP / endowment / money-back / unit-linked), populate it.
 - Return ONLY the JSON, nothing else.`;
 
 // ─── AI Parsing ───────────────────────────────────────────────────────────────
@@ -363,12 +367,20 @@ function parseInsuranceDocument(text) {
     premium_amount: premiumMatch ? parseFloat(premiumMatch[1].replace(/,/g, '')) : null,
     premium_frequency: 'monthly',
     coverage_amount: coverageMatch ? parseFloat(coverageMatch[1].replace(/,/g, '')) : null,
+    fund_value: null,
     start_date: normalizeDate(startMatch ? startMatch[1] : null),
     end_date: normalizeDate(endMatch ? endMatch[1] : null),
     renewal_date: normalizeDate(renewalMatch ? renewalMatch[1] : null),
     notes: null,
     insured_name: insuredNameMatch ? insuredNameMatch[1].trim() : null,
   };
+  // For market-linked policies (ULIP, endowment, money-back), extract the fund/unit value.
+  const fundValueMatch = text.match(
+    /(?:fund\s+value|unit\s+(?:balance|value)|nav\s+value|portfolio\s+value|unit[-\s]linked\s+value|current\s+(?:fund|market)\s+value)[ \t:]{1,30}(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i
+  );
+  if (fundValueMatch) {
+    record.fund_value = parseFloat(fundValueMatch[1].replace(/,/g, ''));
+  }
   return { import_type: 'insurance', records: [record] };
 }
 

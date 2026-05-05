@@ -45,7 +45,9 @@ For "liabilities" records use:
 { "name": string, "lender": string, "type": "<mortgage|auto|student|personal|credit_card|heloc|other>", "original_principal": number|null, "current_balance": number, "interest_rate": number|null, "minimum_payment": number|null }
 
 For "insurance" records use:
-{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "terms": string|null, "covered_conditions": ["<condition1>", "<condition2>"], "insured_name": string|null }
+{ "name": string, "provider": string|null, "type": "<life|term_life|health|dental|vision|auto|home|renters|disability|umbrella|travel|pet|business|other>", "policy_number": string|null, "premium_amount": number|null, "premium_frequency": "<monthly|quarterly|semi_annual|annual|one_time>", "coverage_amount": number|null, "fund_value": number|null, "start_date": "YYYY-MM-DD|null", "end_date": "YYYY-MM-DD|null", "renewal_date": "YYYY-MM-DD|null", "notes": string|null, "terms": string|null, "covered_conditions": ["<condition1>", "<condition2>"], "insured_name": string|null }
+- "coverage_amount": The death benefit / sum assured (pure insurance payout) stated in the document.
+- "fund_value": The current market/fund value of the investment component. Populate this for market-linked policies (ULIP, endowment, money-back, whole-life with unit-linked component) where the document shows a separate fund/NAV value or unit balance value. Use null for pure-protection plans (term life, health, auto, etc.) that have no investment component.
 - "insured_name": The name of the person(s) insured / policy holder as stated in the document (e.g. "John Smith"). Use null if not found.
 - "terms": A comprehensive summary of the policy's key terms extracted verbatim or closely paraphrased from the document. Include: what is covered, coverage limits, deductibles, co-pays/co-insurance, exclusions, waiting periods, claim procedures, and any other material conditions. This is the most important field for enabling later coverage questions — be thorough. Use null only when the document contains no coverage detail at all.
 - "covered_conditions": A JSON array of specific covered conditions, procedures, events, or items explicitly listed in the document (e.g. ["hospitalization", "surgery", "accidental death", "critical illness", "maternity", "dental cleaning"]). Use [] when none can be identified.
@@ -59,6 +61,7 @@ Rules:
 - For investment/brokerage accounts include the total value as the balance.
 - FD (Fixed Deposit) accounts should use type "cd" in accounts records.
 - Choose "insurance" as import_type when the document is primarily an insurance policy or premium notice.
+- For market-linked insurance policies (ULIP, endowment, money-back, whole-life with investment component): classify as import_type="insurance". Set coverage_amount to the death benefit/sum assured and set fund_value to the current market/fund value of the investment units. Both values can coexist on a single insurance record.
 - For CAS (Consolidated Account Statement) documents that list multiple mutual fund scheme portfolios: return each scheme as an "accounts" record with type="brokerage", balance=current market value, institution=AMC name, and use import_type="accounts".
 - For mutual fund / SIP transaction statements: treat each fund scheme as an "accounts" record with type="brokerage" and balance=current market value or total invested amount.
 - When a single document contains both account balances and loan/liability details, prefer returning the type that has more records, or return all records as the detected dominant type.
@@ -179,7 +182,8 @@ EPFO / PROVIDENT FUND VALIDATION (critical – never classify as liabilities):
 INSURANCE DETAIL VALIDATION (applies only when import_type is "insurance"):
 - "terms": Verify the terms field contains a thorough summary of coverage. If the raw text has coverage details, exclusions, deductibles, co-pays, waiting periods, or claim procedures that are missing from terms, expand the field. This is critical — a sparse or missing terms field will make coverage queries useless.
 - "covered_conditions": Verify the array contains all specific conditions, procedures, or events explicitly listed as covered in the raw text. Add any that were missed (e.g. hospitalization, surgery, maternity, accidental death, critical illness, dental cleaning, vision exam). Must be a JSON array of strings, not a plain string.
-- "insured_name": If null or missing, look for the name of the insured person / policy holder in the raw text (e.g. labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", "Member Name") and populate it.`;
+- "insured_name": If null or missing, look for the name of the insured person / policy holder in the raw text (e.g. labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", "Member Name") and populate it.
+- "fund_value": If the policy is market-linked (ULIP, endowment, money-back, whole-life with units) and the raw text shows a current fund/unit/NAV value that differs from the extracted fund_value, correct it. If fund_value is null but the raw text clearly states a current fund/portfolio/unit balance, populate it.`;
 
 /**
  * Pass 2: validate and refine an initial extraction against the source text.
@@ -264,6 +268,7 @@ CATEGORY 3 – WRONG TYPE CLASSIFICATION
 - EPFO / PROVIDENT FUND CORRECTION: If the raw text contains "EPFO", "UAN", "Universal Account Number", "Employee Provident Fund", "EPF Passbook", "PF Passbook", or "Provident Fund" and import_type is "liabilities", correct import_type to "accounts", set type="pension", and add an accuracy note. These are retirement savings, never liabilities.
 - For insurance records: if "terms" is null or very short (< 50 characters) but the raw text contains coverage details, expand "terms" with all coverage information, exclusions, deductibles, and claim procedures found. If "covered_conditions" is empty but the raw text lists covered items, populate it as a JSON array.
 - For insurance records: if "insured_name" is null but the raw text contains the name of the insured person or policy holder (labelled "Insured", "Insured Name", "Policy Holder", "Named Insured", "Life Assured", or "Member Name"), populate it.
+- For insurance records: if "fund_value" is null or incorrect but the raw text shows a current fund value, unit balance, or portfolio value for a market-linked policy (ULIP / endowment / money-back / unit-linked), populate or correct it.
 
 Return the corrected result in EXACTLY this JSON format – no markdown fences, no prose, only the JSON:
 {
@@ -725,6 +730,7 @@ function parseInsuranceDocument(text) {
     premium_amount: premiumMatch ? parseFloat(premiumMatch[1].replace(/,/g, '')) : null,
     premium_frequency: 'monthly',
     coverage_amount: coverageMatch ? parseFloat(coverageMatch[1].replace(/,/g, '')) : null,
+    fund_value: null,
     start_date: normalizeDate(startMatch ? startMatch[1] : null),
     end_date: normalizeDate(endMatch ? endMatch[1] : null),
     renewal_date: normalizeDate(renewalMatch ? renewalMatch[1] : null),
@@ -733,6 +739,14 @@ function parseInsuranceDocument(text) {
     covered_conditions: coveredConditions,
     insured_name: insuredNameMatch ? insuredNameMatch[1].trim() : null,
   };
+
+  // For market-linked policies (ULIP, endowment, money-back), extract the fund/unit value.
+  const fundValueMatch = text.match(
+    /(?:fund\s+value|unit\s+(?:balance|value)|nav\s+value|portfolio\s+value|unit[-\s]linked\s+value|current\s+(?:fund|market)\s+value)[ \t:]{1,30}(?:\$|₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i
+  );
+  if (fundValueMatch) {
+    record.fund_value = parseFloat(fundValueMatch[1].replace(/,/g, ''));
+  }
 
   return { import_type: 'insurance', records: [record] };
 }

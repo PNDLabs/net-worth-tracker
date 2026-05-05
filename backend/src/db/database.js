@@ -21,8 +21,11 @@ const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
  *       live spot price refresh and purity-aware value calculation)
  *   6 – removed sip_installments table (SIP tracking removed; mutual funds
  *       tracked via brokerage accounts and holdings instead)
+ *   7 – insurance_plans: added fund_value (investment component of market-linked
+ *       policies such as ULIPs) and linked_account_id (FK to accounts for the
+ *       auto-created brokerage account that tracks the fund value in net worth)
  */
-const DB_SCHEMA_VERSION = 6;
+const DB_SCHEMA_VERSION = 7;
 
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
@@ -166,6 +169,9 @@ function runMigrations(db) {
   addColumnIfMissing('insurance_plans', 'covered_conditions', 'TEXT');
   addColumnIfMissing('insurance_plans', 'insured_name', 'TEXT');
   addColumnIfMissing('insurance_plans', 'linked_asset_id', 'INTEGER REFERENCES assets(id) ON DELETE SET NULL');
+  // Schema v7: market-linked insurance (ULIP) fund value and linked brokerage account.
+  addColumnIfMissing('insurance_plans', 'fund_value', 'REAL');
+  addColumnIfMissing('insurance_plans', 'linked_account_id', 'INTEGER REFERENCES accounts(id) ON DELETE SET NULL');
 
   // Schema v6: remove sip_installments table (SIP tracking removed).
   // DROP IF EXISTS is safe to run on every startup.

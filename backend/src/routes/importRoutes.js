@@ -153,25 +153,26 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
          VALUES ('liability', ?, ?, date('now'), 'import update')`
       ).run(existingId, newBalance);
     } else if (importType === 'insurance') {
-      const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+      const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
       const newPremium = premium_amount != null ? Number(premium_amount) : Number(existingValue);
       conn.prepare(
-        `UPDATE insurance_plans SET
-           name = coalesce(?, name),
-           provider = coalesce(?, provider),
-           type = coalesce(?, type),
-           policy_number = coalesce(?, policy_number),
-           premium_amount = coalesce(?, premium_amount),
-           premium_frequency = coalesce(?, premium_frequency),
-           coverage_amount = coalesce(?, coverage_amount),
-           start_date = coalesce(?, start_date),
-           end_date = coalesce(?, end_date),
-           renewal_date = coalesce(?, renewal_date),
-           notes = coalesce(?, notes),
-           terms = coalesce(?, terms),
-           covered_conditions = coalesce(?, covered_conditions),
-           insured_name = coalesce(?, insured_name),
-           updated_at = datetime('now')
+        `UPDATE insurance_plans
+         SET name = coalesce(?, name),
+             provider = coalesce(?, provider),
+             type = coalesce(?, type),
+             policy_number = coalesce(?, policy_number),
+             premium_amount = coalesce(?, premium_amount),
+             premium_frequency = coalesce(?, premium_frequency),
+             coverage_amount = coalesce(?, coverage_amount),
+             start_date = coalesce(?, start_date),
+             end_date = coalesce(?, end_date),
+             renewal_date = coalesce(?, renewal_date),
+             notes = coalesce(?, notes),
+             terms = coalesce(?, terms),
+             covered_conditions = coalesce(?, covered_conditions),
+             insured_name = coalesce(?, insured_name),
+             fund_value = coalesce(?, fund_value),
+             updated_at = datetime('now')
          WHERE id = ?`
       ).run(
         name ? String(name) : null,
@@ -188,6 +189,7 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         terms ? String(terms) : null,
         covered_conditions != null ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : []) : null,
         insured_name ? String(insured_name) : null,
+        fund_value != null ? Number(fund_value) : null,
         existingId
       );
       // Record the new premium in history so the graph reflects the updated value
@@ -195,6 +197,18 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
          VALUES ('insurance', ?, ?, date('now'), 'import update')`
       ).run(existingId, newPremium);
+      // Sync the linked brokerage account balance when fund_value is updated
+      if (fund_value != null) {
+        const linkedPlan = conn.prepare(`SELECT linked_account_id FROM insurance_plans WHERE id = ?`).get(existingId);
+        if (linkedPlan && linkedPlan.linked_account_id) {
+          conn.prepare(`UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`)
+            .run(Number(fund_value), linkedPlan.linked_account_id);
+          conn.prepare(
+            `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+             VALUES ('account', ?, ?, date('now'), 'insurance fund value update')`
+          ).run(linkedPlan.linked_account_id, Number(fund_value));
+        }
+      }
     }
   });
   doUpdate();
@@ -321,14 +335,14 @@ router.post('/csv', upload.single('file'), (req, res) => {
       ).run(insResult.lastInsertRowid, newBalance);
 
     } else if (importType === 'insurance') {
-      const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+      const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
       if (!name) throw new Error('name is required');
       const covJson = covered_conditions != null
         ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
         : null;
       const insResult = conn.prepare(
-        `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         String(name), provider ? String(provider) : null, String(type),
         policy_number ? String(policy_number) : null,
@@ -341,7 +355,8 @@ router.post('/csv', upload.single('file'), (req, res) => {
         notes ? String(notes) : null,
         terms ? String(terms) : null,
         covJson,
-        insured_name ? String(insured_name) : null
+        insured_name ? String(insured_name) : null,
+        fund_value != null ? Number(fund_value) : null
       );
       conn.prepare(
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
@@ -521,13 +536,13 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
         ).run(insResult.lastInsertRowid, newBalance);
 
       } else if (importType === 'insurance') {
-        const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+        const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
         if (!name) throw new Error('name is required');
         const covJson = covered_conditions != null
           ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
           : null;
         const insResult = conn.prepare(
-          `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           String(name), provider ? String(provider) : null, String(type),
           policy_number ? String(policy_number) : null,
@@ -540,7 +555,8 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           notes ? String(notes) : null,
           terms ? String(terms) : null,
           covJson,
-          insured_name ? String(insured_name) : null
+          insured_name ? String(insured_name) : null,
+          fund_value != null ? Number(fund_value) : null
         );
         conn.prepare(
           `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)

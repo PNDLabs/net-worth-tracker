@@ -3,7 +3,7 @@
  * Mirrors backend/src/routes/insurance.js.
  */
 
-import { query, run } from './dbService';
+import { query, run, executeSet } from './dbService';
 
 function parseCoveredConditions(raw) {
   if (!raw) return [];
@@ -30,7 +30,7 @@ export async function createInsurance({
   name, provider, type = 'other', policy_number,
   premium_amount, premium_frequency = 'monthly', coverage_amount,
   start_date, end_date, renewal_date, notes,
-  terms, covered_conditions, insured_name,
+  terms, covered_conditions, insured_name, fund_value,
 }) {
   if (!name) throw new Error('name is required');
   const dup = await query(
@@ -47,8 +47,8 @@ export async function createInsurance({
     `INSERT INTO insurance_plans
        (name, provider, type, policy_number, premium_amount, premium_frequency,
         coverage_amount, start_date, end_date, renewal_date, notes,
-        terms, covered_conditions, insured_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        terms, covered_conditions, insured_name, fund_value)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name, provider ?? null, type, policy_number ?? null,
       premium_amount != null ? Number(premium_amount) : null,
@@ -59,6 +59,7 @@ export async function createInsurance({
       terms ?? null,
       covJson,
       insured_name ?? null,
+      fund_value != null ? Number(fund_value) : null,
     ]
   );
   const rows = await query('SELECT * FROM insurance_plans WHERE id = ?', [lastId]);
@@ -69,7 +70,7 @@ export async function updateInsurance(id, {
   name, provider, type, policy_number,
   premium_amount, premium_frequency, coverage_amount,
   start_date, end_date, renewal_date, notes,
-  terms, covered_conditions, insured_name,
+  terms, covered_conditions, insured_name, fund_value,
 }) {
   const existing = await getInsurancePlan(id);
   const updated = {
@@ -91,29 +92,93 @@ export async function updateInsurance(id, {
         ? existing.covered_conditions
         : JSON.stringify(existing.covered_conditions || [])),
     insured_name: insured_name !== undefined ? insured_name : existing.insured_name,
+    fund_value: fund_value !== undefined ? (fund_value != null ? Number(fund_value) : null) : existing.fund_value,
   };
   if (!updated.name) throw new Error('name is required');
 
-  await run(
-    `UPDATE insurance_plans
-     SET name=?, provider=?, type=?, policy_number=?, premium_amount=?,
-         premium_frequency=?, coverage_amount=?, start_date=?, end_date=?,
-         renewal_date=?, notes=?, terms=?, covered_conditions=?, insured_name=?,
-         updated_at=datetime('now')
-     WHERE id=?`,
-    [
-      updated.name, updated.provider, updated.type, updated.policy_number,
-      updated.premium_amount, updated.premium_frequency, updated.coverage_amount,
-      updated.start_date, updated.end_date, updated.renewal_date, updated.notes,
-      updated.terms, updated.covered_conditions, updated.insured_name,
-      id,
-    ]
-  );
+  const ops = [
+    {
+      statement: `UPDATE insurance_plans
+       SET name=?, provider=?, type=?, policy_number=?, premium_amount=?,
+           premium_frequency=?, coverage_amount=?, start_date=?, end_date=?,
+           renewal_date=?, notes=?, terms=?, covered_conditions=?, insured_name=?,
+           fund_value=?, updated_at=datetime('now')
+       WHERE id=?`,
+      values: [
+        updated.name, updated.provider, updated.type, updated.policy_number,
+        updated.premium_amount, updated.premium_frequency, updated.coverage_amount,
+        updated.start_date, updated.end_date, updated.renewal_date, updated.notes,
+        updated.terms, updated.covered_conditions, updated.insured_name,
+        updated.fund_value,
+        id,
+      ],
+    },
+  ];
+
+  // Sync linked brokerage account balance when fund_value changes.
+  if (fund_value !== undefined && updated.fund_value != null && existing.linked_account_id) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    ops.push({
+      statement: `UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`,
+      values: [updated.fund_value, existing.linked_account_id],
+    });
+    ops.push({
+      statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, ?, 'insurance fund value update')`,
+      values: [existing.linked_account_id, updated.fund_value, todayStr],
+    });
+  }
+
+  await executeSet(ops);
   const rows = await query('SELECT * FROM insurance_plans WHERE id = ?', [id]);
   return hydratePlan(rows[0]);
 }
 
-export async function deleteInsurance(id) {
+export async function createFundAccountFromInsurance(id) {
+  const plan = await getInsurancePlan(id);
+
+  if (plan.fund_value == null || plan.fund_value <= 0) {
+    throw new Error('The insurance plan must have a fund_value to create a linked fund account');
+  }
+
+  const accountName = `${plan.name} – Fund`;
+
+  const dup = await query(`SELECT * FROM accounts WHERE lower(name)=lower(?)`, [accountName]);
+  if (dup.length) {
+    throw Object.assign(
+      new Error(`A fund account named "${accountName}" already exists`),
+      { status: 409, account: dup[0] }
+    );
+  }
+
+  let currency = 'USD';
+  try {
+    const { getSettings } = await import('./settingsService');
+    const cfg = await getSettings();
+    if (cfg.defaultCurrency) currency = String(cfg.defaultCurrency).replace(/^"|"$/g, '') || 'USD';
+  } catch (_) {}
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const { lastId: accountId } = await run(
+    `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`,
+    [accountName, plan.provider ?? null, currency, plan.fund_value]
+  );
+
+  await run(
+    `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, ?, 'Initial value from insurance fund')`,
+    [accountId, plan.fund_value, todayStr]
+  );
+
+  await run(
+    `UPDATE insurance_plans SET linked_account_id=?, updated_at=datetime('now') WHERE id=?`,
+    [accountId, id]
+  );
+
+  const accountRows = await query('SELECT * FROM accounts WHERE id = ?', [accountId]);
+  const planRows = await query('SELECT * FROM insurance_plans WHERE id = ?', [id]);
+  return { account: accountRows[0], plan: hydratePlan(planRows[0]) };
+}
+
+
   await getInsurancePlan(id);
   await run('DELETE FROM insurance_plans WHERE id = ?', [id]);
   return { message: 'Insurance plan deleted' };

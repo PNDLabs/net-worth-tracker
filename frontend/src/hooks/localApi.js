@@ -57,6 +57,7 @@ export const api = {
   updateInsurance: (id, data) => insSvc.updateInsurance(id, data),
   deleteInsurance: (id) => insSvc.deleteInsurance(id),
   createAssetFromInsurance: (id) => insSvc.createAssetFromInsurance(id),
+  createFundAccountFromInsurance: (id) => insSvc.createFundAccountFromInsurance(id),
 
   queryInsuranceCoverage: async (question) => {
     if (!question || !question.trim()) throw new Error('question is required');
