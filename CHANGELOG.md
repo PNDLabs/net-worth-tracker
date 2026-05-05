@@ -12,6 +12,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.9.1] – 2026-05-05
+
+### Fixed
+- **Fund value now immediately visible after import** — when a market-linked insurance document (ULIP, endowment, money-back, etc.) is imported and a `fund_value` is detected, the linked brokerage account is now **created automatically** during the import itself. Previously the fund value was saved on the insurance plan but no account was created, so it never appeared in net worth without a manual "📈 Track Fund" click.
+  - Fixed in all three insert paths: backend CSV import, backend JSON import, frontend (Capacitor native) import.
+  - Also fixed in all three *update* paths: if a re-import brings in `fund_value` for an insurance plan that has no linked account yet, the linked brokerage account is created automatically then too.
+  - Import preview panel now shows a green notice "📈 Fund value detected — a linked brokerage account will be created automatically…" when any of the records in the preview carry a fund value.
+  - PDF Tips section updated to mention the auto-creation behaviour.
+
+---
+
+
+
+### Added
+- **Market-linked insurance (ULIP) fund tracking** — insurance plans that have an investment component (ULIP, endowment, money-back, whole-life with unit-linked component) now support a dedicated **Fund Value** field that captures the current market value of the investment units. This is separate from the existing `coverage_amount` (death benefit / sum assured).
+  - **DB schema v7**: Two new columns added to `insurance_plans`:
+    - `fund_value REAL` — current market/fund value of the investment component.
+    - `linked_account_id INTEGER` — foreign key to the `accounts` table (ON DELETE SET NULL).
+  - **Fund Value column** in the Insurance page table (hidden on mobile) shows the current fund value in green.
+  - **Fund Value field** in the Add/Edit plan modal, with a hint to leave blank for pure-protection plans.
+  - **📈 Track Fund button** — when `fund_value` is set and no linked account exists, this button creates a brokerage-type account (e.g. "My ULIP – Fund") and links it to the insurance plan. The linked account balance counts towards net worth automatically.
+  - **📈 Fund Linked badge** — displayed when the plan is already linked to a fund account.
+  - **Auto-sync** — whenever `fund_value` is updated (via Edit or re-import), the linked brokerage account balance and its `value_history` are updated to match.
+  - **AI PDF/text import** — the AI system prompt now instructs the model to extract `fund_value` from market-linked insurance documents. Pattern-based (fallback) parser also recognises common ULIP keywords ("fund value", "unit balance", "nav value", "portfolio value").
+  - **AI validation & accuracy passes** extended to verify and populate `fund_value` for market-linked policies.
+
+---
+
 ## [1.8.5] – 2026-05-05
 
 ### Fixed

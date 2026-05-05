@@ -47,6 +47,7 @@ export const api = {
   updateInsurance: (id, data) => apiFetch(`/insurance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteInsurance: (id) => apiFetch(`/insurance/${id}`, { method: 'DELETE' }),
   createAssetFromInsurance: (id) => apiFetch(`/insurance/${id}/create-asset`, { method: 'POST' }),
+  createFundAccountFromInsurance: (id) => apiFetch(`/insurance/${id}/create-fund-account`, { method: 'POST' }),
   queryInsuranceCoverage: (question) => apiFetch('/insurance/query', { method: 'POST', body: JSON.stringify({ question }) }),
   analyzeInsuranceCoverage: () => apiFetch('/insurance/analysis'),
 

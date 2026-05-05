@@ -12,6 +12,7 @@ const FREQUENCIES = ['monthly', 'quarterly', 'semi_annual', 'annual', 'one_time'
 const EMPTY = {
   name: '', provider: '', type: 'other', policy_number: '',
   premium_amount: '', premium_frequency: 'monthly', coverage_amount: '',
+  fund_value: '',
   start_date: '', end_date: '', renewal_date: '', notes: '',
   terms: '', covered_conditions: [], insured_name: '',
 };
@@ -85,6 +86,7 @@ export default function InsurancePage() {
         premium_amount: r.premium_amount ?? '',
         premium_frequency: r.premium_frequency || 'monthly',
         coverage_amount: r.coverage_amount ?? '',
+        fund_value: r.fund_value ?? '',
         start_date: r.start_date || '',
         end_date: r.end_date || '',
         renewal_date: r.renewal_date || '',
@@ -122,6 +124,7 @@ export default function InsurancePage() {
       ...p,
       premium_amount: p.premium_amount ?? '',
       coverage_amount: p.coverage_amount ?? '',
+      fund_value: p.fund_value ?? '',
       start_date: p.start_date || '',
       end_date: p.end_date || '',
       renewal_date: p.renewal_date || '',
@@ -158,6 +161,7 @@ export default function InsurancePage() {
         ...form,
         premium_amount: form.premium_amount !== '' ? Number(form.premium_amount) : null,
         coverage_amount: form.coverage_amount !== '' ? Number(form.coverage_amount) : null,
+        fund_value: form.fund_value !== '' ? Number(form.fund_value) : null,
         start_date: form.start_date || null,
         end_date: form.end_date || null,
         renewal_date: form.renewal_date || null,
@@ -185,6 +189,17 @@ export default function InsurancePage() {
     if (!confirm(`Create a vehicle asset "${assetName}" with current value ${fmt(plan.coverage_amount)} (IDV)?\n\nThis asset will be linked to this insurance policy and will count towards your net worth.`)) return;
     try {
       await api.createAssetFromInsurance(plan.id);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function createFundAccount(plan) {
+    const accountName = `${plan.name} – Fund`;
+    if (!confirm(`Create a brokerage account "${accountName}" with balance ${fmt(plan.fund_value)}?\n\nThis account will be linked to this insurance plan and its balance will count towards your net worth. The balance will stay in sync when you update the fund value.`)) return;
+    try {
+      await api.createFundAccountFromInsurance(plan.id);
       load();
     } catch (e) {
       alert(e.message);
@@ -257,6 +272,7 @@ export default function InsurancePage() {
                   <th className="hide-mobile">Policy #</th>
                   <th style={{ textAlign: 'right' }}>Premium</th>
                   <th style={{ textAlign: 'right' }}>Coverage</th>
+                  <th style={{ textAlign: 'right' }} className="hide-mobile">Fund Value</th>
                   <th className="hide-mobile">Start Date</th>
                   <th>End / Renewal</th>
                   <th>Status</th>
@@ -300,6 +316,13 @@ export default function InsurancePage() {
                       <td style={{ textAlign: 'right' }}>
                         {p.coverage_amount != null ? fmt(p.coverage_amount) : '—'}
                       </td>
+                      <td style={{ textAlign: 'right' }} className="hide-mobile">
+                        {p.fund_value != null ? (
+                          <span style={{ color: 'var(--color-success, #2e7d32)', fontWeight: 600 }}>
+                            {fmt(p.fund_value)}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className="hide-mobile">{formatDate(p.start_date)}</td>
                       <td>
                         {p.end_date ? (
@@ -341,6 +364,19 @@ export default function InsurancePage() {
                               title="A vehicle asset has been created from this policy's IDV"
                               style={{ fontSize: 11, color: 'var(--color-success)', fontWeight: 600, padding: '2px 6px', border: '1px solid var(--color-success)', borderRadius: 8 }}
                             >🔗 Asset Linked</span>
+                          )}
+                          {p.fund_value != null && !p.linked_account_id && (
+                            <button
+                              className="btn-ghost btn-sm"
+                              title="Create a brokerage account to track this policy's fund value in net worth"
+                              onClick={() => createFundAccount(p)}
+                            >📈 Track Fund</button>
+                          )}
+                          {p.linked_account_id && (
+                            <span
+                              title="A fund account has been created and linked to this insurance plan. Its balance counts towards net worth."
+                              style={{ fontSize: 11, color: 'var(--color-primary)', fontWeight: 600, padding: '2px 6px', border: '1px solid var(--color-primary)', borderRadius: 8 }}
+                            >📈 Fund Linked</span>
                           )}
                           <button className="btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
                           <button className="btn-danger btn-sm" onClick={() => remove(p.id)}>Delete</button>
@@ -404,6 +440,23 @@ export default function InsurancePage() {
               <div className="form-group">
                 <label>Coverage Amount{currency ? ` (${currency})` : ''}</label>
                 <input type="number" value={form.coverage_amount} onChange={(e) => setForm({ ...form, coverage_amount: e.target.value })} placeholder="500000" />
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>Fund Value{currency ? ` (${currency})` : ''}</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={form.fund_value}
+                  onChange={(e) => setForm({ ...form, fund_value: e.target.value })}
+                  placeholder="Current market value of investment component (e.g. ULIP)"
+                />
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 3 }}>
+                  For market-linked policies (ULIP, endowment, etc.) — the current fund / NAV value.
+                  Leave blank for pure-protection plans.
+                </div>
               </div>
             </div>
 

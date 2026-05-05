@@ -142,18 +142,58 @@ async function updateRow(importType, row, existingId, existingValue, defaultCurr
       },
     ]);
   } else if (importType === 'insurance') {
-    const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+    const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
     const newPremium = premium_amount != null ? Number(premium_amount) : Number(existingValue);
-    await executeSet([
+    const ops = [
       {
-        statement: `UPDATE insurance_plans SET name=coalesce(?,name), provider=coalesce(?,provider), type=coalesce(?,type), policy_number=coalesce(?,policy_number), premium_amount=coalesce(?,premium_amount), premium_frequency=coalesce(?,premium_frequency), coverage_amount=coalesce(?,coverage_amount), start_date=coalesce(?,start_date), end_date=coalesce(?,end_date), renewal_date=coalesce(?,renewal_date), notes=coalesce(?,notes), terms=coalesce(?,terms), covered_conditions=coalesce(?,covered_conditions), insured_name=coalesce(?,insured_name), updated_at=datetime('now') WHERE id=?`,
-        values: [name ? String(name) : null, provider ? String(provider) : null, type ? String(type) : null, policy_number ? String(policy_number) : null, premium_amount != null ? Number(premium_amount) : null, premium_frequency ? String(premium_frequency) : null, coverage_amount != null ? Number(coverage_amount) : null, start_date ? String(start_date) : null, end_date ? String(end_date) : null, renewal_date ? String(renewal_date) : null, notes ? String(notes) : null, terms ? String(terms) : null, covered_conditions != null ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : []) : null, insured_name ? String(insured_name) : null, existingId],
+        statement: `UPDATE insurance_plans SET name=coalesce(?,name), provider=coalesce(?,provider), type=coalesce(?,type), policy_number=coalesce(?,policy_number), premium_amount=coalesce(?,premium_amount), premium_frequency=coalesce(?,premium_frequency), coverage_amount=coalesce(?,coverage_amount), start_date=coalesce(?,start_date), end_date=coalesce(?,end_date), renewal_date=coalesce(?,renewal_date), notes=coalesce(?,notes), terms=coalesce(?,terms), covered_conditions=coalesce(?,covered_conditions), insured_name=coalesce(?,insured_name), fund_value=coalesce(?,fund_value), updated_at=datetime('now') WHERE id=?`,
+        values: [name ? String(name) : null, provider ? String(provider) : null, type ? String(type) : null, policy_number ? String(policy_number) : null, premium_amount != null ? Number(premium_amount) : null, premium_frequency ? String(premium_frequency) : null, coverage_amount != null ? Number(coverage_amount) : null, start_date ? String(start_date) : null, end_date ? String(end_date) : null, renewal_date ? String(renewal_date) : null, notes ? String(notes) : null, terms ? String(terms) : null, covered_conditions != null ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : []) : null, insured_name ? String(insured_name) : null, fund_value != null ? Number(fund_value) : null, existingId],
       },
       {
         statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('insurance', ?, ?, date('now'), 'import update')`,
         values: [existingId, newPremium],
       },
-    ]);
+    ];
+    // Sync or auto-create the linked brokerage account when fund_value is present
+    if (fund_value != null && Number(fund_value) > 0) {
+      const linkedRows = await query(`SELECT linked_account_id, name, provider FROM insurance_plans WHERE id=?`, [existingId]);
+      if (linkedRows.length) {
+        const { linked_account_id, name: planName, provider: planProvider } = linkedRows[0];
+        if (linked_account_id) {
+          // Plan already has a linked account — just sync the balance.
+          ops.push({
+            statement: `UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`,
+            values: [Number(fund_value), linked_account_id],
+          });
+          ops.push({
+            statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'insurance fund value update')`,
+            values: [linked_account_id, Number(fund_value)],
+          });
+        } else {
+          // No linked account yet — create one now and link it.
+          const effectiveName = (name && String(name).trim()) || (planName && String(planName).trim()) || 'Insurance';
+          const effectiveProvider = (provider && String(provider).trim()) || (planProvider && String(planProvider).trim()) || null;
+          const accountName = `${effectiveName} – Fund`;
+          const dupRows = await query(`SELECT id FROM accounts WHERE lower(name)=lower(?)`, [accountName]);
+          if (!dupRows.length) {
+            const currency = defaultCurrency || 'USD';
+            const { lastId: accId } = await run(
+              `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`,
+              [accountName, effectiveProvider, currency, Number(fund_value)]
+            );
+            ops.push({
+              statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`,
+              values: [accId, Number(fund_value)],
+            });
+            ops.push({
+              statement: `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`,
+              values: [accId, existingId],
+            });
+          }
+        }
+      }
+    }
+    await executeSet(ops);
   } else {
     throw new Error(`Unknown import type: ${importType}`);
   }
@@ -203,26 +243,49 @@ async function insertRow(importType, row, defaultCurrency = null) {
       [lastId, newBalance]
     );
   } else if (importType === 'insurance') {
-    const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+    const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value } = row;
     if (!name) throw new Error('name is required');
     const covJson = covered_conditions != null
       ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
       : null;
-    const { lastId } = await run(
-      `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    const { lastId: planId } = await run(
+      `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name, fund_value)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [String(name), provider ? String(provider) : null, String(type), policy_number ? String(policy_number) : null,
        premium_amount != null ? Number(premium_amount) : null, String(premium_frequency),
        coverage_amount != null ? Number(coverage_amount) : null,
        start_date ? String(start_date) : null, end_date ? String(end_date) : null,
        renewal_date ? String(renewal_date) : null, notes ? String(notes) : null,
        terms ? String(terms) : null, covJson,
-       insured_name ? String(insured_name) : null]
+       insured_name ? String(insured_name) : null,
+       fund_value != null ? Number(fund_value) : null]
     );
     await run(
       `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('insurance', ?, ?, date('now'), 'import')`,
-      [lastId, premium_amount != null ? Number(premium_amount) : 0]
+      [planId, premium_amount != null ? Number(premium_amount) : 0]
     );
+
+    // Auto-create a linked brokerage account so the fund value is immediately
+    // visible in net worth without any extra manual step.
+    if (fund_value != null && Number(fund_value) > 0) {
+      const accountName = `${String(name)} – Fund`;
+      const dup = await query(`SELECT id FROM accounts WHERE lower(name)=lower(?)`, [accountName]);
+      if (!dup.length) {
+        const currency = defaultCurrency || 'USD';
+        const { lastId: accId } = await run(
+          `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`,
+          [accountName, provider ? String(provider) : null, currency, Number(fund_value)]
+        );
+        await run(
+          `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`,
+          [accId, Number(fund_value)]
+        );
+        await run(
+          `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`,
+          [accId, planId]
+        );
+      }
+    }
   } else {
     throw new Error(`Unknown import type: ${importType}`);
   }
