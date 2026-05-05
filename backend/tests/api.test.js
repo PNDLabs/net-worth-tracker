@@ -362,12 +362,12 @@ Car Loan,Toyota Finance,auto,25000,20000,4.9`;
     const acct = list.body.find((a) => a.name === 'Monthly Savings');
     expect(acct.balance).toBe(5500);
 
-    // value_history should contain the old balance
+    // value_history should contain the new balance
     const hist = await request(app).get(`/api/value-history?entity_type=account&entity_id=${acct.id}`);
     expect(hist.status).toBe(200);
     const importEntry = hist.body.find((h) => h.notes === 'import update');
     expect(importEntry).toBeDefined();
-    expect(importEntry.value).toBe(5000);
+    expect(importEntry.value).toBe(5500);
   });
 
   test('POST /api/import/json - _updateExisting for assets records history', async () => {
@@ -389,7 +389,7 @@ Car Loan,Toyota Finance,auto,25000,20000,4.9`;
     const hist = await request(app).get(`/api/value-history?entity_type=asset&entity_id=${asset.id}`);
     const entry = hist.body.find((h) => h.notes === 'import update');
     expect(entry).toBeDefined();
-    expect(entry.value).toBe(300000);
+    expect(entry.value).toBe(320000);
   });
 
   test('POST /api/import/json - _updateExisting for liabilities records history', async () => {
@@ -411,7 +411,7 @@ Car Loan,Toyota Finance,auto,25000,20000,4.9`;
     const hist = await request(app).get(`/api/value-history?entity_type=liability&entity_id=${liab.id}`);
     const entry = hist.body.find((h) => h.notes === 'import update');
     expect(entry).toBeDefined();
-    expect(entry.value).toBe(20000);
+    expect(entry.value).toBe(18000);
   });
 
   test('POST /api/import/json - _updateExisting for insurance records history', async () => {
@@ -433,7 +433,7 @@ Car Loan,Toyota Finance,auto,25000,20000,4.9`;
     const hist = await request(app).get(`/api/value-history?entity_type=insurance&entity_id=${plan.id}`);
     const entry = hist.body.find((h) => h.notes === 'import update');
     expect(entry).toBeDefined();
-    expect(entry.value).toBe(200);
+    expect(entry.value).toBe(220);
   });
 
   test('POST /api/import/json - _updateExisting does not zero balance when field missing', async () => {

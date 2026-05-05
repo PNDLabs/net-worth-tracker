@@ -107,12 +107,12 @@ async function updateRow(importType, row, existingId, existingValue, defaultCurr
     const { name, institution, type, currency = defaultCurrency } = row;
     await executeSet([
       {
-        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'import update')`,
-        values: [existingId, Number(existingValue) || 0],
-      },
-      {
         statement: `UPDATE accounts SET name=coalesce(?,name), institution=coalesce(?,institution), type=coalesce(?,type), currency=coalesce(?,currency), balance=?, updated_at=datetime('now') WHERE id=?`,
         values: [name ? String(name) : null, institution ? String(institution) : null, type ? String(type) : null, currency || null, newBalance, existingId],
+      },
+      {
+        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'import update')`,
+        values: [existingId, newBalance],
       },
     ]);
   } else if (importType === 'assets') {
@@ -120,12 +120,12 @@ async function updateRow(importType, row, existingId, existingValue, defaultCurr
     const { name, category, acquisition_date, acquisition_cost } = row;
     await executeSet([
       {
-        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('asset', ?, ?, date('now'), 'import update')`,
-        values: [existingId, Number(existingValue) || 0],
-      },
-      {
         statement: `UPDATE assets SET name=coalesce(?,name), category=coalesce(?,category), acquisition_date=coalesce(?,acquisition_date), acquisition_cost=coalesce(?,acquisition_cost), current_value=?, updated_at=datetime('now') WHERE id=?`,
         values: [name ? String(name) : null, category ? String(category) : null, acquisition_date ? String(acquisition_date) : null, acquisition_cost != null ? Number(acquisition_cost) : null, newValue, existingId],
+      },
+      {
+        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('asset', ?, ?, date('now'), 'import update')`,
+        values: [existingId, newValue],
       },
     ]);
   } else if (importType === 'liabilities') {
@@ -133,24 +133,25 @@ async function updateRow(importType, row, existingId, existingValue, defaultCurr
     const { name, lender, type, original_principal, interest_rate, minimum_payment } = row;
     await executeSet([
       {
-        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('liability', ?, ?, date('now'), 'import update')`,
-        values: [existingId, Number(existingValue) || 0],
-      },
-      {
         statement: `UPDATE liabilities SET name=coalesce(?,name), lender=coalesce(?,lender), type=coalesce(?,type), original_principal=coalesce(?,original_principal), current_balance=?, interest_rate=coalesce(?,interest_rate), minimum_payment=coalesce(?,minimum_payment), updated_at=datetime('now') WHERE id=?`,
         values: [name ? String(name) : null, lender ? String(lender) : null, type ? String(type) : null, original_principal != null ? Number(original_principal) : null, newBalance, interest_rate != null ? Number(interest_rate) : null, minimum_payment != null ? Number(minimum_payment) : null, existingId],
+      },
+      {
+        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('liability', ?, ?, date('now'), 'import update')`,
+        values: [existingId, newBalance],
       },
     ]);
   } else if (importType === 'insurance') {
     const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+    const newPremium = premium_amount != null ? Number(premium_amount) : Number(existingValue);
     await executeSet([
-      {
-        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('insurance', ?, ?, date('now'), 'import update')`,
-        values: [existingId, Number(existingValue) || 0],
-      },
       {
         statement: `UPDATE insurance_plans SET name=coalesce(?,name), provider=coalesce(?,provider), type=coalesce(?,type), policy_number=coalesce(?,policy_number), premium_amount=coalesce(?,premium_amount), premium_frequency=coalesce(?,premium_frequency), coverage_amount=coalesce(?,coverage_amount), start_date=coalesce(?,start_date), end_date=coalesce(?,end_date), renewal_date=coalesce(?,renewal_date), notes=coalesce(?,notes), terms=coalesce(?,terms), covered_conditions=coalesce(?,covered_conditions), insured_name=coalesce(?,insured_name), updated_at=datetime('now') WHERE id=?`,
         values: [name ? String(name) : null, provider ? String(provider) : null, type ? String(type) : null, policy_number ? String(policy_number) : null, premium_amount != null ? Number(premium_amount) : null, premium_frequency ? String(premium_frequency) : null, coverage_amount != null ? Number(coverage_amount) : null, start_date ? String(start_date) : null, end_date ? String(end_date) : null, renewal_date ? String(renewal_date) : null, notes ? String(notes) : null, terms ? String(terms) : null, covered_conditions != null ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : []) : null, insured_name ? String(insured_name) : null, existingId],
+      },
+      {
+        statement: `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('insurance', ?, ?, date('now'), 'import update')`,
+        values: [existingId, newPremium],
       },
     ]);
   } else {
@@ -164,27 +165,42 @@ async function insertRow(importType, row, defaultCurrency = null) {
   if (importType === 'accounts') {
     const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
     if (!name) throw new Error('name is required');
-    await run(
+    const newBalance = Number(balance);
+    const { lastId } = await run(
       `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`,
-      [String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance)]
+      [String(name), institution ? String(institution) : null, String(type), currency || null, newBalance]
+    );
+    await run(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('account', ?, ?, date('now'), 'import')`,
+      [lastId, newBalance]
     );
   } else if (importType === 'assets') {
     const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
     if (!name) throw new Error('name is required');
-    await run(
+    const newValue = Number(current_value);
+    const { lastId } = await run(
       `INSERT INTO assets (name, category, acquisition_date, acquisition_cost, current_value) VALUES (?, ?, ?, ?, ?)`,
       [String(name), String(category), acquisition_date ? String(acquisition_date) : null,
-       acquisition_cost != null ? Number(acquisition_cost) : null, Number(current_value)]
+       acquisition_cost != null ? Number(acquisition_cost) : null, newValue]
+    );
+    await run(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('asset', ?, ?, date('now'), 'import')`,
+      [lastId, newValue]
     );
   } else if (importType === 'liabilities') {
     const { name, lender, type = 'other', original_principal, current_balance = 0, interest_rate, minimum_payment } = row;
     if (!name) throw new Error('name is required');
-    await run(
+    const newBalance = Number(current_balance);
+    const { lastId } = await run(
       `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [String(name), lender ? String(lender) : null, String(type),
-       original_principal != null ? Number(original_principal) : null, Number(current_balance),
+       original_principal != null ? Number(original_principal) : null, newBalance,
        interest_rate != null ? Number(interest_rate) : null,
        minimum_payment != null ? Number(minimum_payment) : null]
+    );
+    await run(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('liability', ?, ?, date('now'), 'import')`,
+      [lastId, newBalance]
     );
   } else if (importType === 'insurance') {
     const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
@@ -192,7 +208,7 @@ async function insertRow(importType, row, defaultCurrency = null) {
     const covJson = covered_conditions != null
       ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
       : null;
-    await run(
+    const { lastId } = await run(
       `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [String(name), provider ? String(provider) : null, String(type), policy_number ? String(policy_number) : null,
@@ -202,6 +218,10 @@ async function insertRow(importType, row, defaultCurrency = null) {
        renewal_date ? String(renewal_date) : null, notes ? String(notes) : null,
        terms ? String(terms) : null, covJson,
        insured_name ? String(insured_name) : null]
+    );
+    await run(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes) VALUES ('insurance', ?, ?, date('now'), 'import')`,
+      [lastId, premium_amount != null ? Number(premium_amount) : 0]
     );
   } else {
     throw new Error(`Unknown import type: ${importType}`);

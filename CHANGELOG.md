@@ -12,7 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.8.2] – 2026-05-05
+## [1.8.3] – 2026-05-05
+
+### Fixed
+- **Import history bug** — when "Update existing" was chosen for a duplicate record, the *old* value was incorrectly written to `value_history` with today's date instead of the *new* value. This caused the history graph to show stale/wrong values and prevented the correct balance from ever appearing in the chart. The update logic now records the **new** (incoming) value in history after updating the record, consistent with how manual balance edits work.
+- **Import missing initial history** — newly imported records (accounts, assets, liabilities, insurance) via CSV, PDF, or JSON were not creating an initial `value_history` entry, so their history graphs were always empty. All insert paths now record an initial history point (notes: `'import'`) just like the regular `POST /api/accounts` endpoint records `'Initial balance'`.
+
+---
+
+
 
 ### Added
 - **Import: Skip option for new records** — the import preview panel now shows **Import** / **Skip** radio buttons for every new (non-duplicate) record, allowing manual review and selective exclusion of unwanted entries before confirming. Skipped new records are greyed out in the preview table. The confirm button now displays the net count of records that will actually be imported (e.g. "Confirm & Import 3 of 5 Record(s)").

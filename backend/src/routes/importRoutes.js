@@ -77,10 +77,6 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
       const newBalance = row.balance != null ? Number(row.balance) : Number(existingValue);
       const { name, institution, type, currency = defaultCurrency } = row;
       conn.prepare(
-        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
-         VALUES ('account', ?, ?, date('now'), 'import update')`
-      ).run(existingId, Number(existingValue) || 0);
-      conn.prepare(
         `UPDATE accounts SET
            name = coalesce(?, name),
            institution = coalesce(?, institution),
@@ -97,13 +93,14 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         newBalance,
         existingId
       );
+      // Record the new balance in history so the graph reflects the updated value
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('account', ?, ?, date('now'), 'import update')`
+      ).run(existingId, newBalance);
     } else if (importType === 'assets') {
       const newValue = row.current_value != null ? Number(row.current_value) : Number(existingValue);
       const { name, category, acquisition_date, acquisition_cost } = row;
-      conn.prepare(
-        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
-         VALUES ('asset', ?, ?, date('now'), 'import update')`
-      ).run(existingId, Number(existingValue) || 0);
       conn.prepare(
         `UPDATE assets SET
            name = coalesce(?, name),
@@ -121,13 +118,14 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         newValue,
         existingId
       );
+      // Record the new value in history so the graph reflects the updated value
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('asset', ?, ?, date('now'), 'import update')`
+      ).run(existingId, newValue);
     } else if (importType === 'liabilities') {
       const newBalance = row.current_balance != null ? Number(row.current_balance) : Number(existingValue);
       const { name, lender, type, original_principal, interest_rate, minimum_payment } = row;
-      conn.prepare(
-        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
-         VALUES ('liability', ?, ?, date('now'), 'import update')`
-      ).run(existingId, Number(existingValue) || 0);
       conn.prepare(
         `UPDATE liabilities SET
            name = coalesce(?, name),
@@ -149,12 +147,14 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         minimum_payment != null ? Number(minimum_payment) : null,
         existingId
       );
-    } else if (importType === 'insurance') {
-      const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+      // Record the new balance in history so the graph reflects the updated value
       conn.prepare(
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
-         VALUES ('insurance', ?, ?, date('now'), 'import update')`
-      ).run(existingId, Number(existingValue) || 0);
+         VALUES ('liability', ?, ?, date('now'), 'import update')`
+      ).run(existingId, newBalance);
+    } else if (importType === 'insurance') {
+      const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+      const newPremium = premium_amount != null ? Number(premium_amount) : Number(existingValue);
       conn.prepare(
         `UPDATE insurance_plans SET
            name = coalesce(?, name),
@@ -190,6 +190,11 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         insured_name ? String(insured_name) : null,
         existingId
       );
+      // Record the new premium in history so the graph reflects the updated value
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('insurance', ?, ?, date('now'), 'import update')`
+      ).run(existingId, newPremium);
     }
   });
   doUpdate();
@@ -268,37 +273,52 @@ router.post('/csv', upload.single('file'), (req, res) => {
     if (importType === 'accounts') {
       const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
       if (!name) throw new Error('name is required');
-      conn.prepare(
+      const newBalance = Number(balance);
+      const insResult = conn.prepare(
         `INSERT INTO accounts (name, institution, type, currency, balance)
          VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`
-      ).run(String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance));
+      ).run(String(name), institution ? String(institution) : null, String(type), currency || null, newBalance);
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('account', ?, ?, date('now'), 'import')`
+      ).run(insResult.lastInsertRowid, newBalance);
 
     } else if (importType === 'assets') {
       const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
       if (!name) throw new Error('name is required');
-      conn.prepare(
+      const newValue = Number(current_value);
+      const insResult = conn.prepare(
         `INSERT INTO assets (name, category, acquisition_date, acquisition_cost, current_value)
          VALUES (?, ?, ?, ?, ?)`
       ).run(
         String(name), String(category),
         acquisition_date ? String(acquisition_date) : null,
         acquisition_cost != null ? Number(acquisition_cost) : null,
-        Number(current_value)
+        newValue
       );
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('asset', ?, ?, date('now'), 'import')`
+      ).run(insResult.lastInsertRowid, newValue);
 
     } else if (importType === 'liabilities') {
       const { name, lender, type = 'other', original_principal, current_balance = 0, interest_rate, minimum_payment } = row;
       if (!name) throw new Error('name is required');
-      conn.prepare(
+      const newBalance = Number(current_balance);
+      const insResult = conn.prepare(
         `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).run(
         String(name), lender ? String(lender) : null, String(type),
         original_principal != null ? Number(original_principal) : null,
-        Number(current_balance),
+        newBalance,
         interest_rate != null ? Number(interest_rate) : null,
         minimum_payment != null ? Number(minimum_payment) : null
       );
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('liability', ?, ?, date('now'), 'import')`
+      ).run(insResult.lastInsertRowid, newBalance);
 
     } else if (importType === 'insurance') {
       const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
@@ -306,7 +326,7 @@ router.post('/csv', upload.single('file'), (req, res) => {
       const covJson = covered_conditions != null
         ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
         : null;
-      conn.prepare(
+      const insResult = conn.prepare(
         `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
@@ -323,6 +343,10 @@ router.post('/csv', upload.single('file'), (req, res) => {
         covJson,
         insured_name ? String(insured_name) : null
       );
+      conn.prepare(
+        `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+         VALUES ('insurance', ?, ?, date('now'), 'import')`
+      ).run(insResult.lastInsertRowid, premium_amount != null ? Number(premium_amount) : 0);
 
     }
   });
@@ -452,34 +476,49 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
       if (importType === 'accounts') {
         const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
         if (!name) throw new Error('name is required');
-        conn.prepare(
+        const newBalance = Number(balance);
+        const insResult = conn.prepare(
           `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, ?, COALESCE(?, 'USD'), ?)`
-        ).run(String(name), institution ? String(institution) : null, String(type), currency || null, Number(balance));
+        ).run(String(name), institution ? String(institution) : null, String(type), currency || null, newBalance);
+        conn.prepare(
+          `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+           VALUES ('account', ?, ?, date('now'), 'import')`
+        ).run(insResult.lastInsertRowid, newBalance);
 
       } else if (importType === 'assets') {
         const { name, category = 'other', acquisition_date, acquisition_cost, current_value = 0 } = row;
         if (!name) throw new Error('name is required');
-        conn.prepare(
+        const newValue = Number(current_value);
+        const insResult = conn.prepare(
           `INSERT INTO assets (name, category, acquisition_date, acquisition_cost, current_value) VALUES (?, ?, ?, ?, ?)`
         ).run(
           String(name), String(category),
           acquisition_date ? String(acquisition_date) : null,
           acquisition_cost != null ? Number(acquisition_cost) : null,
-          Number(current_value)
+          newValue
         );
+        conn.prepare(
+          `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+           VALUES ('asset', ?, ?, date('now'), 'import')`
+        ).run(insResult.lastInsertRowid, newValue);
 
       } else if (importType === 'liabilities') {
         const { name, lender, type = 'other', original_principal, current_balance = 0, interest_rate, minimum_payment } = row;
         if (!name) throw new Error('name is required');
-        conn.prepare(
+        const newBalance = Number(current_balance);
+        const insResult = conn.prepare(
           `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment) VALUES (?, ?, ?, ?, ?, ?, ?)`
         ).run(
           String(name), lender ? String(lender) : null, String(type),
           original_principal != null ? Number(original_principal) : null,
-          Number(current_balance),
+          newBalance,
           interest_rate != null ? Number(interest_rate) : null,
           minimum_payment != null ? Number(minimum_payment) : null
         );
+        conn.prepare(
+          `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+           VALUES ('liability', ?, ?, date('now'), 'import')`
+        ).run(insResult.lastInsertRowid, newBalance);
 
       } else if (importType === 'insurance') {
         const { name, provider, type = 'other', policy_number, premium_amount, premium_frequency = 'monthly', coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
@@ -487,7 +526,7 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
         const covJson = covered_conditions != null
           ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : [])
           : null;
-        conn.prepare(
+        const insResult = conn.prepare(
           `INSERT INTO insurance_plans (name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           String(name), provider ? String(provider) : null, String(type),
@@ -503,6 +542,10 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           covJson,
           insured_name ? String(insured_name) : null
         );
+        conn.prepare(
+          `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+           VALUES ('insurance', ?, ?, date('now'), 'import')`
+        ).run(insResult.lastInsertRowid, premium_amount != null ? Number(premium_amount) : 0);
       }
       results.imported++;
     } catch (err) {
