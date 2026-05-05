@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.2] – 2026-05-05
+
+### Added
+- **Import: Skip option for new records** — the import preview panel now shows **Import** / **Skip** radio buttons for every new (non-duplicate) record, allowing manual review and selective exclusion of unwanted entries before confirming. Skipped new records are greyed out in the preview table. The confirm button now displays the net count of records that will actually be imported (e.g. "Confirm & Import 3 of 5 Record(s)").
+
+---
+
 ## [1.8.1] – 2026-05-05
 
 ### Added

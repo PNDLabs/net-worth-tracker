@@ -28,6 +28,8 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [withinBatchIndices, setWithinBatchIndices] = useState(new Set());
   // Map of index → 'skip' | 'create' | 'update'
   const [duplicateActions, setDuplicateActions] = useState(new Map());
+  // Map of index → 'import' | 'skip' for genuinely new records
+  const [newActions, setNewActions] = useState(new Map());
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   // Cache check results per import type so switching back doesn't re-query the DB.
   const dupCacheRef = useState(() => ({}))[0];
@@ -53,6 +55,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         if (!cancelled) {
           setDuplicateIndices(dbDups);
           setWithinBatchIndices(batchDups);
+          setNewActions(new Map());
         }
       })
       .catch(() => {
@@ -60,6 +63,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         if (!cancelled) {
           setDuplicateIndices(new Set());
           setWithinBatchIndices(new Set());
+          setNewActions(new Map());
         }
       })
       .finally(() => { if (!cancelled) setCheckingDuplicates(false); });
@@ -74,14 +78,30 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     });
   };
 
+  const setNewAction = (idx, action) => {
+    setNewActions((prev) => {
+      const next = new Map(prev);
+      next.set(idx, action);
+      return next;
+    });
+  };
+
+  const shouldImportRecord = (i) => {
+    const action = duplicateActions.get(i);
+    const isBatchDup = withinBatchIndices.has(i);
+    const isDup = duplicateIndices.has(i);
+    const newAction = newActions.get(i) || 'import';
+    if (isBatchDup && (!action || action === 'skip')) return false;
+    if (!isDup && !isBatchDup && newAction === 'skip') return false;
+    return true;
+  };
+
   const handleConfirm = () => {
     const finalRecords = [];
     for (let i = 0; i < preview.records.length; i++) {
+      if (!shouldImportRecord(i)) continue;
       const r = preview.records[i];
       const action = duplicateActions.get(i);
-      const isBatchDup = withinBatchIndices.has(i);
-      // Within-batch dups default to skipped — filter them out of the payload entirely.
-      if (isBatchDup && (!action || action === 'skip')) continue;
       if (action === 'create') {
         finalRecords.push({ ...r, _forceImport: true });
       } else if (action === 'update') {
@@ -93,7 +113,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     onConfirm(importType, finalRecords);
   };
 
-  const anyDups = duplicateIndices.size > 0 || withinBatchIndices.size > 0;
+  // Count of records that will actually be imported with current selections.
+  const netImportCount = preview.records.reduce((count, _r, i) => (
+    shouldImportRecord(i) ? count + 1 : count
+  ), 0);
 
   if (!preview) return null;
   return (
@@ -155,7 +178,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         <table>
           <thead>
             <tr>
-              {anyDups && <th style={{ whiteSpace: 'nowrap' }}>Status</th>}
+              <th style={{ whiteSpace: 'nowrap' }}>Status</th>
               {Object.keys(preview.records[0] || {}).map((k) => (
                 <th key={k}>{k.replace(/_/g, ' ')}</th>
               ))}
@@ -166,65 +189,82 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
               const isDup = duplicateIndices.has(i);
               const isBatchDup = withinBatchIndices.has(i);
               const action = duplicateActions.get(i) || 'skip';
+              const newAction = newActions.get(i) || 'import';
               const rowStyle = isDup
                 ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' }
                 : isBatchDup
                 ? { background: action === 'create' ? '#e3f2fd' : '#f3e5f5' }
-                : {};
+                : { background: newAction === 'skip' ? 'var(--color-surface-2)' : undefined };
               return (
                 <tr key={i} style={rowStyle}>
-                  {anyDups && (
-                    <td style={{ whiteSpace: 'nowrap', minWidth: 160 }}>
-                      {isDup ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          {isBatchDup && (
-                            <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 also in-file dup</span>
-                          )}
-                          {[
-                            { value: 'skip', label: '⏭ Skip', color: '#e65100' },
-                            { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
-                            { value: 'create', label: '➕ Create new', color: '#1565c0' },
-                          ].map((opt) => (
-                            <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                              <input
-                                type="radio"
-                                name={`dup-action-${i}`}
-                                value={opt.value}
-                                checked={action === opt.value}
-                                onChange={() => setAction(i, opt.value)}
-                              />
-                              <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
-                                {opt.label}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : isBatchDup ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 In-file duplicate</span>
-                          {[
-                            { value: 'skip', label: '⏭ Skip (keep first)', color: '#e65100' },
-                            { value: 'create', label: '➕ Keep this one', color: '#1565c0' },
-                          ].map((opt) => (
-                            <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                              <input
-                                type="radio"
-                                name={`dup-action-${i}`}
-                                value={opt.value}
-                                checked={action === opt.value}
-                                onChange={() => setAction(i, opt.value)}
-                              />
-                              <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
-                                {opt.label}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 11, color: 'var(--color-success)' }}>✅ New</span>
-                      )}
-                    </td>
-                  )}
+                  <td style={{ whiteSpace: 'nowrap', minWidth: 160 }}>
+                    {isDup ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {isBatchDup && (
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 also in-file dup</span>
+                        )}
+                        {[
+                          { value: 'skip', label: '⏭ Skip', color: '#e65100' },
+                          { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
+                          { value: 'create', label: '➕ Create new', color: '#1565c0' },
+                        ].map((opt) => (
+                          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                            <input
+                              type="radio"
+                              name={`dup-action-${i}`}
+                              value={opt.value}
+                              checked={action === opt.value}
+                              onChange={() => setAction(i, opt.value)}
+                            />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
+                              {opt.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : isBatchDup ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#6a1b9a', marginBottom: 2 }}>📋 In-file duplicate</span>
+                        {[
+                          { value: 'skip', label: '⏭ Skip (keep first)', color: '#e65100' },
+                          { value: 'create', label: '➕ Keep this one', color: '#1565c0' },
+                        ].map((opt) => (
+                          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                            <input
+                              type="radio"
+                              name={`dup-action-${i}`}
+                              value={opt.value}
+                              checked={action === opt.value}
+                              onChange={() => setAction(i, opt.value)}
+                            />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
+                              {opt.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {[
+                          { value: 'import', label: '✅ Import', color: 'var(--color-success)' },
+                          { value: 'skip', label: '⏭ Skip', color: '#e65100' },
+                        ].map((opt) => (
+                          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                            <input
+                              type="radio"
+                              name={`new-action-${i}`}
+                              value={opt.value}
+                              checked={newAction === opt.value}
+                              onChange={() => setNewAction(i, opt.value)}
+                            />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: newAction === opt.value ? opt.color : 'var(--color-text-muted)' }}>
+                              {opt.label}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   {Object.values(r).map((v, j) => (
                     <td key={j}>{v === null ? '—' : String(v)}</td>
                   ))}
@@ -261,7 +301,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         <button className="btn-primary" onClick={handleConfirm} disabled={loading || checkingDuplicates}>
           {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</>
             : checkingDuplicates ? '🔍 Checking…'
-            : `✅ Confirm & Import ${preview.records.length} Record(s)`}
+            : `✅ Confirm & Import ${netImportCount} of ${preview.records.length} Record(s)`}
         </button>
         <button className="btn-ghost" onClick={onCancel} disabled={loading}>Cancel</button>
       </div>
