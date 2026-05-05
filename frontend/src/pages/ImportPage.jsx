@@ -129,9 +129,9 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
             {preview.records.map((r, i) => {
               const isDup = duplicateIndices.has(i);
               const action = duplicateActions.get(i) || 'skip';
-              const rowBg = isDup && action === 'skip' ? '#fff8e1' : isDup && action === 'update' ? '#e8f5e9' : {};
+              const rowStyle = isDup ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' } : {};
               return (
-                <tr key={i} style={rowBg ? { background: rowBg } : {}}>
+                <tr key={i} style={rowStyle}>
                   {duplicateIndices.size > 0 && (
                     <td style={{ whiteSpace: 'nowrap', minWidth: 160 }}>
                       {isDup ? (
