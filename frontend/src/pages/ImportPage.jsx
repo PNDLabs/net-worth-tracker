@@ -297,6 +297,12 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         </details>
       )}
 
+      {importType === 'insurance' && preview.records.some(r => r.fund_value != null && Number(r.fund_value) > 0) && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, background: '#e8f5e9', border: '1px solid #a5d6a7', marginBottom: 12, fontSize: 13, color: '#2e7d32' }}>
+          📈 <strong>Fund value detected</strong> — a linked brokerage account will be created automatically for each insurance plan with a fund value, so it counts toward your net worth immediately.
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 10 }}>
         <button className="btn-primary" onClick={handleConfirm} disabled={loading || checkingDuplicates}>
           {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Importing…</>
@@ -480,6 +486,7 @@ export default function ImportPage() {
               <ul style={{ fontSize: 12, color: 'var(--color-text-muted)', paddingLeft: 16, lineHeight: 2 }}>
                 <li>Supports bank, investment, loan, insurance, and <strong>mutual fund / CAS</strong> statements</li>
                 <li>Mutual fund / CAS statements auto-detected from CAMS, KFintech, or similar AMC PDFs and imported as brokerage accounts</li>
+                <li>Market-linked insurance (ULIP, endowment) — fund value is auto-detected and a linked brokerage account is <strong>created automatically</strong> so it counts toward net worth</li>
                 <li>Password-protected PDFs supported</li>
                 <li>Set <code>AI_API_KEY</code> in <code>.env</code> for best accuracy</li>
                 <li>Review the preview before importing</li>

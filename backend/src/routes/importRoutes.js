@@ -197,16 +197,38 @@ function updateExistingRecord(conn, importType, row, existingId, existingValue, 
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
          VALUES ('insurance', ?, ?, date('now'), 'import update')`
       ).run(existingId, newPremium);
-      // Sync the linked brokerage account balance when fund_value is updated
-      if (fund_value != null) {
-        const linkedPlan = conn.prepare(`SELECT linked_account_id FROM insurance_plans WHERE id = ?`).get(existingId);
-        if (linkedPlan && linkedPlan.linked_account_id) {
-          conn.prepare(`UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`)
-            .run(Number(fund_value), linkedPlan.linked_account_id);
-          conn.prepare(
-            `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
-             VALUES ('account', ?, ?, date('now'), 'insurance fund value update')`
-          ).run(linkedPlan.linked_account_id, Number(fund_value));
+      // Sync or auto-create the linked brokerage account when fund_value is present
+      if (fund_value != null && Number(fund_value) > 0) {
+        const linkedPlan = conn.prepare(`SELECT linked_account_id, name as pname, provider as pprovider FROM insurance_plans WHERE id = ?`).get(existingId);
+        if (linkedPlan) {
+          if (linkedPlan.linked_account_id) {
+            // Already linked — just sync the balance.
+            conn.prepare(`UPDATE accounts SET balance=?, updated_at=datetime('now') WHERE id=?`)
+              .run(Number(fund_value), linkedPlan.linked_account_id);
+            conn.prepare(
+              `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+               VALUES ('account', ?, ?, date('now'), 'insurance fund value update')`
+            ).run(linkedPlan.linked_account_id, Number(fund_value));
+          } else {
+            // No linked account yet — create one now and link it.
+            const effectiveName = (name && String(name).trim()) || (linkedPlan.pname && String(linkedPlan.pname).trim()) || 'Insurance';
+            const effectiveProvider = (provider && String(provider).trim()) || (linkedPlan.pprovider && String(linkedPlan.pprovider).trim()) || null;
+            const accountName = `${effectiveName} – Fund`;
+            const existingAcc = conn.prepare(`SELECT id FROM accounts WHERE lower(name)=lower(?)`).get(accountName);
+            if (!existingAcc) {
+              const currency = getDefaultCurrency(conn) || 'USD';
+              const accResult = conn.prepare(
+                `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`
+              ).run(accountName, effectiveProvider, currency, Number(fund_value));
+              conn.prepare(
+                `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+                 VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`
+              ).run(accResult.lastInsertRowid, Number(fund_value));
+              conn.prepare(
+                `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`
+              ).run(accResult.lastInsertRowid, existingId);
+            }
+          }
         }
       }
     }
@@ -358,13 +380,34 @@ router.post('/csv', upload.single('file'), (req, res) => {
         insured_name ? String(insured_name) : null,
         fund_value != null ? Number(fund_value) : null
       );
+      const planId = insResult.lastInsertRowid;
       conn.prepare(
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
          VALUES ('insurance', ?, ?, date('now'), 'import')`
-      ).run(insResult.lastInsertRowid, premium_amount != null ? Number(premium_amount) : 0);
+      ).run(planId, premium_amount != null ? Number(premium_amount) : 0);
+
+      // Auto-create a linked brokerage account for the fund value so it is
+      // immediately visible in net worth without any extra manual step.
+      if (fund_value != null && Number(fund_value) > 0) {
+        const accountName = `${String(name)} – Fund`;
+        const existingAcc = conn.prepare(`SELECT id FROM accounts WHERE lower(name)=lower(?)`).get(accountName);
+        if (!existingAcc) {
+          const currency = getDefaultCurrency(conn) || 'USD';
+          const accResult = conn.prepare(
+            `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`
+          ).run(accountName, provider ? String(provider) : null, currency, Number(fund_value));
+          conn.prepare(
+            `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+             VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`
+          ).run(accResult.lastInsertRowid, Number(fund_value));
+          conn.prepare(
+            `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`
+          ).run(accResult.lastInsertRowid, planId);
+        }
+      }
 
     }
-  });
+  });  // end conn.transaction
 
   for (let i = 0; i < records.length; i++) {
     try {
@@ -558,10 +601,31 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
           insured_name ? String(insured_name) : null,
           fund_value != null ? Number(fund_value) : null
         );
+        const planId = insResult.lastInsertRowid;
         conn.prepare(
           `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
            VALUES ('insurance', ?, ?, date('now'), 'import')`
-        ).run(insResult.lastInsertRowid, premium_amount != null ? Number(premium_amount) : 0);
+        ).run(planId, premium_amount != null ? Number(premium_amount) : 0);
+
+        // Auto-create a linked brokerage account so the fund value is
+        // immediately visible in net worth without any extra manual step.
+        if (fund_value != null && Number(fund_value) > 0) {
+          const accountName = `${String(name)} – Fund`;
+          const existingAcc = conn.prepare(`SELECT id FROM accounts WHERE lower(name)=lower(?)`).get(accountName);
+          if (!existingAcc) {
+            const currency = getDefaultCurrency(conn) || 'USD';
+            const accResult = conn.prepare(
+              `INSERT INTO accounts (name, institution, type, currency, balance) VALUES (?, ?, 'brokerage', ?, ?)`
+            ).run(accountName, provider ? String(provider) : null, currency, Number(fund_value));
+            conn.prepare(
+              `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+               VALUES ('account', ?, ?, date('now'), 'Initial value from insurance fund')`
+            ).run(accResult.lastInsertRowid, Number(fund_value));
+            conn.prepare(
+              `UPDATE insurance_plans SET linked_account_id=? WHERE id=?`
+            ).run(accResult.lastInsertRowid, planId);
+          }
+        }
       }
       results.imported++;
     } catch (err) {

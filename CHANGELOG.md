@@ -12,7 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.9.0] – 2026-05-05
+## [1.9.1] – 2026-05-05
+
+### Fixed
+- **Fund value now immediately visible after import** — when a market-linked insurance document (ULIP, endowment, money-back, etc.) is imported and a `fund_value` is detected, the linked brokerage account is now **created automatically** during the import itself. Previously the fund value was saved on the insurance plan but no account was created, so it never appeared in net worth without a manual "📈 Track Fund" click.
+  - Fixed in all three insert paths: backend CSV import, backend JSON import, frontend (Capacitor native) import.
+  - Also fixed in all three *update* paths: if a re-import brings in `fund_value` for an insurance plan that has no linked account yet, the linked brokerage account is created automatically then too.
+  - Import preview panel now shows a green notice "📈 Fund value detected — a linked brokerage account will be created automatically…" when any of the records in the preview carry a fund value.
+  - PDF Tips section updated to mention the auto-creation behaviour.
+
+---
+
+
 
 ### Added
 - **Market-linked insurance (ULIP) fund tracking** — insurance plans that have an investment component (ULIP, endowment, money-back, whole-life with unit-linked component) now support a dedicated **Fund Value** field that captures the current market value of the investment units. This is separate from the existing `coverage_amount` (death benefit / sum assured).
