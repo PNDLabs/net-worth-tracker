@@ -22,26 +22,153 @@ function getDefaultCurrency(conn) {
  * @param {object} row - record with at least { name, institution?, lender?, provider? }
  */
 function isDuplicateRecord(conn, importType, row) {
+  return !!getExistingRecord(conn, importType, row);
+}
+
+/**
+ * Returns the existing DB record (with id and current value) if a matching row exists.
+ */
+function getExistingRecord(conn, importType, row) {
   const name = String(row.name || '');
   if (importType === 'accounts') {
-    return !!conn.prepare(
-      `SELECT id FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
+    return conn.prepare(
+      `SELECT id, balance AS value FROM accounts WHERE lower(name) = lower(?) AND lower(coalesce(institution,'')) = lower(coalesce(?,''))`
     ).get(name, row.institution ? String(row.institution) : null);
   }
   if (importType === 'assets') {
-    return !!conn.prepare(`SELECT id FROM assets WHERE lower(name) = lower(?)`).get(name);
+    return conn.prepare(`SELECT id, current_value AS value FROM assets WHERE lower(name) = lower(?)`).get(name);
   }
   if (importType === 'liabilities') {
-    return !!conn.prepare(
-      `SELECT id FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
+    return conn.prepare(
+      `SELECT id, current_balance AS value FROM liabilities WHERE lower(name) = lower(?) AND lower(coalesce(lender,'')) = lower(coalesce(?,''))`
     ).get(name, row.lender ? String(row.lender) : null);
   }
   if (importType === 'insurance') {
-    return !!conn.prepare(
-      `SELECT id FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,'')) AND lower(coalesce(insured_name,'')) = lower(coalesce(?,''))`
+    return conn.prepare(
+      `SELECT id, coalesce(premium_amount, 0) AS value FROM insurance_plans WHERE lower(name) = lower(?) AND lower(coalesce(provider,'')) = lower(coalesce(?,'')) AND lower(coalesce(insured_name,'')) = lower(coalesce(?,''))`
     ).get(name, row.provider ? String(row.provider) : null, row.insured_name ? String(row.insured_name) : null);
   }
-  return false;
+  return null;
+}
+
+/**
+ * Update an existing record with new values from the import row,
+ * recording the old value in value_history for historical tracking.
+ */
+function updateExistingRecord(conn, importType, row, existingId, existingValue, defaultCurrency) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (importType === 'accounts') {
+    const { name, institution, type, currency = defaultCurrency, balance = 0 } = row;
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+       VALUES ('account', ?, ?, ?, 'import update')`
+    ).run(existingId, Number(existingValue) || 0, today);
+    conn.prepare(
+      `UPDATE accounts SET
+         name = coalesce(?, name),
+         institution = coalesce(?, institution),
+         type = coalesce(?, type),
+         currency = coalesce(?, currency),
+         balance = ?,
+         updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      name ? String(name) : null,
+      institution ? String(institution) : null,
+      type ? String(type) : null,
+      currency || null,
+      Number(balance),
+      existingId
+    );
+  } else if (importType === 'assets') {
+    const { name, category, acquisition_date, acquisition_cost, current_value = 0 } = row;
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+       VALUES ('asset', ?, ?, ?, 'import update')`
+    ).run(existingId, Number(existingValue) || 0, today);
+    conn.prepare(
+      `UPDATE assets SET
+         name = coalesce(?, name),
+         category = coalesce(?, category),
+         acquisition_date = coalesce(?, acquisition_date),
+         acquisition_cost = coalesce(?, acquisition_cost),
+         current_value = ?,
+         updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      name ? String(name) : null,
+      category ? String(category) : null,
+      acquisition_date ? String(acquisition_date) : null,
+      acquisition_cost != null ? Number(acquisition_cost) : null,
+      Number(current_value),
+      existingId
+    );
+  } else if (importType === 'liabilities') {
+    const { name, lender, type, original_principal, current_balance = 0, interest_rate, minimum_payment } = row;
+    conn.prepare(
+      `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
+       VALUES ('liability', ?, ?, ?, 'import update')`
+    ).run(existingId, Number(existingValue) || 0, today);
+    conn.prepare(
+      `UPDATE liabilities SET
+         name = coalesce(?, name),
+         lender = coalesce(?, lender),
+         type = coalesce(?, type),
+         original_principal = coalesce(?, original_principal),
+         current_balance = ?,
+         interest_rate = coalesce(?, interest_rate),
+         minimum_payment = coalesce(?, minimum_payment),
+         updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      name ? String(name) : null,
+      lender ? String(lender) : null,
+      type ? String(type) : null,
+      original_principal != null ? Number(original_principal) : null,
+      Number(current_balance),
+      interest_rate != null ? Number(interest_rate) : null,
+      minimum_payment != null ? Number(minimum_payment) : null,
+      existingId
+    );
+  } else if (importType === 'insurance') {
+    const { name, provider, type, policy_number, premium_amount, premium_frequency, coverage_amount, start_date, end_date, renewal_date, notes, terms, covered_conditions, insured_name } = row;
+    conn.prepare(
+      `UPDATE insurance_plans SET
+         name = coalesce(?, name),
+         provider = coalesce(?, provider),
+         type = coalesce(?, type),
+         policy_number = coalesce(?, policy_number),
+         premium_amount = coalesce(?, premium_amount),
+         premium_frequency = coalesce(?, premium_frequency),
+         coverage_amount = coalesce(?, coverage_amount),
+         start_date = coalesce(?, start_date),
+         end_date = coalesce(?, end_date),
+         renewal_date = coalesce(?, renewal_date),
+         notes = coalesce(?, notes),
+         terms = coalesce(?, terms),
+         covered_conditions = coalesce(?, covered_conditions),
+         insured_name = coalesce(?, insured_name),
+         updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(
+      name ? String(name) : null,
+      provider ? String(provider) : null,
+      type ? String(type) : null,
+      policy_number ? String(policy_number) : null,
+      premium_amount != null ? Number(premium_amount) : null,
+      premium_frequency ? String(premium_frequency) : null,
+      coverage_amount != null ? Number(coverage_amount) : null,
+      start_date ? String(start_date) : null,
+      end_date ? String(end_date) : null,
+      renewal_date ? String(renewal_date) : null,
+      notes ? String(notes) : null,
+      terms ? String(terms) : null,
+      covered_conditions != null ? JSON.stringify(Array.isArray(covered_conditions) ? covered_conditions : []) : null,
+      insured_name ? String(insured_name) : null,
+      existingId
+    );
+  }
 }
 
 const upload = multer({
@@ -278,14 +405,20 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
 
   const conn = db.getDb();
   const defaultCurrency = getDefaultCurrency(conn);
-  const results = { imported: 0, skipped: 0, duplicates: 0, errors: [] };
-
-  const isDuplicateJson = (row) => isDuplicateRecord(conn, importType, row);
+  const results = { imported: 0, updated: 0, skipped: 0, duplicates: 0, errors: [] };
 
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
-      if (!row._forceImport && isDuplicateJson(row)) { results.skipped++; results.duplicates++; continue; }
+      const existing = getExistingRecord(conn, importType, row);
+      if (existing) {
+        if (row._updateExisting) {
+          updateExistingRecord(conn, importType, row, existing.id, existing.value, defaultCurrency);
+          results.updated++;
+          continue;
+        }
+        if (!row._forceImport) { results.skipped++; results.duplicates++; continue; }
+      }
 
       if (importType === 'accounts') {
         const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;
@@ -480,14 +613,20 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
 
     const conn = db.getDb();
     const defaultCurrency = getDefaultCurrency(conn);
-    const results = { imported: 0, skipped: 0, duplicates: 0, errors: [], method: parsed.method };
-
-    const isDuplicatePdf = (row) => isDuplicateRecord(conn, importType, row);
+    const results = { imported: 0, updated: 0, skipped: 0, duplicates: 0, errors: [], method: parsed.method };
 
     for (let i = 0; i < parsed.records.length; i++) {
       const row = parsed.records[i];
       try {
-        if (!row._forceImport && isDuplicatePdf(row)) { results.skipped++; results.duplicates++; continue; }
+        const existing = getExistingRecord(conn, importType, row);
+        if (existing) {
+          if (row._updateExisting) {
+            updateExistingRecord(conn, importType, row, existing.id, existing.value, defaultCurrency);
+            results.updated++;
+            continue;
+          }
+          if (!row._forceImport) { results.skipped++; results.duplicates++; continue; }
+        }
 
         if (importType === 'accounts') {
           const { name, institution, type = 'other', currency = defaultCurrency, balance = 0 } = row;

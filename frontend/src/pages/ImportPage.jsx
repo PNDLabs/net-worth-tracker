@@ -24,7 +24,8 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [importType, setImportType] = useState(preview.import_type);
   const validationNotes = preview.validation_notes || [];
   const [duplicateIndices, setDuplicateIndices] = useState(new Set());
-  const [forceImportIndices, setForceImportIndices] = useState(new Set());
+  // Map of index → 'skip' | 'create' | 'update'
+  const [duplicateActions, setDuplicateActions] = useState(new Map());
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   // Cache check results per import type so switching back doesn't re-query the DB.
   const dupCacheRef = useState(() => ({}))[0];
@@ -33,12 +34,12 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     if (!preview.records || preview.records.length === 0) return;
     if (dupCacheRef[importType] !== undefined) {
       setDuplicateIndices(dupCacheRef[importType]);
-      setForceImportIndices(new Set());
+      setDuplicateActions(new Map());
       return;
     }
     let cancelled = false;
     setCheckingDuplicates(true);
-    setForceImportIndices(new Set());
+    setDuplicateActions(new Map());
     api.checkDuplicates(importType, preview.records)
       .then((res) => {
         const result = new Set(res.duplicates || []);
@@ -53,18 +54,21 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     return () => { cancelled = true; };
   }, [importType, preview]); // re-run when type changes or a fresh preview is loaded
 
-  const toggleForce = (idx) => {
-    setForceImportIndices((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx); else next.add(idx);
+  const setAction = (idx, action) => {
+    setDuplicateActions((prev) => {
+      const next = new Map(prev);
+      next.set(idx, action);
       return next;
     });
   };
 
   const handleConfirm = () => {
-    const finalRecords = preview.records.map((r, i) =>
-      forceImportIndices.has(i) ? { ...r, _forceImport: true } : r
-    );
+    const finalRecords = preview.records.map((r, i) => {
+      const action = duplicateActions.get(i);
+      if (action === 'create') return { ...r, _forceImport: true };
+      if (action === 'update') return { ...r, _updateExisting: true };
+      return r;
+    });
     onConfirm(importType, finalRecords);
   };
 
@@ -107,8 +111,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
       {!checkingDuplicates && duplicateIndices.size > 0 && (
         <div style={{ padding: '10px 14px', borderRadius: 6, fontSize: 13, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 12 }}>
           ⚠️ <strong>{duplicateIndices.size}</strong> record(s) appear to already exist (matching name was found).
-          Check <strong>"Import anyway"</strong> on each row you want to create as a new entry.
-          Rows left unchecked will be skipped.
+          For each duplicate row choose: <strong>Skip</strong> (default), <strong>Create new</strong>, or <strong>Update existing</strong> (updates current value and saves old value to history).
         </div>
       )}
 
@@ -123,31 +126,46 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
             </tr>
           </thead>
           <tbody>
-            {preview.records.map((r, i) => (
-              <tr key={i} style={duplicateIndices.has(i) && !forceImportIndices.has(i) ? { background: '#fff8e1' } : {}}>
-                {duplicateIndices.size > 0 && (
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {duplicateIndices.has(i) ? (
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={forceImportIndices.has(i)}
-                          onChange={() => toggleForce(i)}
-                        />
-                        <span style={{ fontSize: 11, fontWeight: 600, color: forceImportIndices.has(i) ? 'var(--color-success)' : '#e65100' }}>
-                          {forceImportIndices.has(i) ? '✅ Import anyway' : '⚠️ Duplicate — skip'}
-                        </span>
-                      </label>
-                    ) : (
-                      <span style={{ fontSize: 11, color: 'var(--color-success)' }}>✅ New</span>
-                    )}
-                  </td>
-                )}
-                {Object.values(r).map((v, j) => (
-                  <td key={j}>{v === null ? '—' : String(v)}</td>
-                ))}
-              </tr>
-            ))}
+            {preview.records.map((r, i) => {
+              const isDup = duplicateIndices.has(i);
+              const action = duplicateActions.get(i) || 'skip';
+              const rowBg = isDup && action === 'skip' ? '#fff8e1' : isDup && action === 'update' ? '#e8f5e9' : {};
+              return (
+                <tr key={i} style={rowBg ? { background: rowBg } : {}}>
+                  {duplicateIndices.size > 0 && (
+                    <td style={{ whiteSpace: 'nowrap', minWidth: 160 }}>
+                      {isDup ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {[
+                            { value: 'skip', label: '⏭ Skip', color: '#e65100' },
+                            { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
+                            { value: 'create', label: '➕ Create new', color: '#1565c0' },
+                          ].map((opt) => (
+                            <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                              <input
+                                type="radio"
+                                name={`dup-action-${i}`}
+                                value={opt.value}
+                                checked={action === opt.value}
+                                onChange={() => setAction(i, opt.value)}
+                              />
+                              <span style={{ fontSize: 11, fontWeight: 600, color: action === opt.value ? opt.color : 'var(--color-text-muted)' }}>
+                                {opt.label}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--color-success)' }}>✅ New</span>
+                      )}
+                    </td>
+                  )}
+                  {Object.values(r).map((v, j) => (
+                    <td key={j}>{v === null ? '—' : String(v)}</td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -412,6 +430,9 @@ export default function ImportPage() {
             {result && (
               <div className={(result.skipped - (result.duplicates || 0)) > 0 ? 'error-msg' : 'success-msg'}>
                 ✅ Imported <strong>{result.imported}</strong> record(s).
+                {result.updated > 0 && (
+                  <> 🔄 Updated <strong>{result.updated}</strong> existing record(s).</>
+                )}
                 {result.duplicates > 0 && (
                   <> ⚠️ Skipped <strong>{result.duplicates}</strong> duplicate(s) (already exist).</>
                 )}

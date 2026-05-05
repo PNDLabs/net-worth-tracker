@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.0] – 2026-05-05
+
+### Added
+- **Import: 3-way duplicate handling** — when a duplicate is detected during PDF, CSV, or text import the preview panel now offers three per-row choices instead of a single checkbox:
+  - **Skip** (default) — row is not imported; the existing record is left unchanged.
+  - **Update existing** — the existing record's values are updated with the imported data and the **previous value is saved to `value_history`**, enabling historical balance tracking. The latest value is used for net worth calculation.
+  - **Create new** — inserts the incoming row as a brand-new entry alongside the existing one.
+  This makes it easy to import monthly statements each month and track how balances change over time.
+
+---
+
 ## [1.7.9] – 2026-04-28
 
 ### Changed
