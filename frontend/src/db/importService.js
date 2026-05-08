@@ -25,6 +25,70 @@ async function readDefaultCurrency() {
   return null;
 }
 
+// ─── CSV Column Alias Normalizer (mirrors importRoutes.js) ───────────────────
+
+const COLUMN_ALIASES_COMMON = {
+  instrument: 'name',
+  scrip: 'name',
+  security: 'name',
+  stock: 'name',
+  company: 'name',
+  scheme: 'name',
+  fund_name: 'name',
+  description: 'name',
+  bank: 'institution',
+  creditor: 'lender',
+};
+
+const COLUMN_ALIASES_BY_TYPE = {
+  accounts: {
+    'cur._val': 'balance',
+    cur_val: 'balance',
+    current_value: 'balance',
+    market_value: 'balance',
+    mkt_value: 'balance',
+    portfolio_value: 'balance',
+    present_value: 'balance',
+  },
+  assets: {
+    'cur._val': 'current_value',
+    cur_val: 'current_value',
+    market_value: 'current_value',
+    mkt_value: 'current_value',
+    portfolio_value: 'current_value',
+    present_value: 'current_value',
+    'avg._cost': 'acquisition_cost',
+    avg_cost: 'acquisition_cost',
+    avg_price: 'acquisition_cost',
+    average_cost: 'acquisition_cost',
+    purchase_price: 'acquisition_cost',
+    invested: 'acquisition_cost',
+  },
+  liabilities: {
+    outstanding_balance: 'current_balance',
+    principal_balance: 'current_balance',
+    remaining_balance: 'current_balance',
+    loan_balance: 'current_balance',
+    'avg._cost': 'original_principal',
+    avg_cost: 'original_principal',
+  },
+};
+
+function applyColumnAliases(normalizedRow, importType) {
+  const aliases = { ...COLUMN_ALIASES_COMMON, ...(COLUMN_ALIASES_BY_TYPE[importType] || {}) };
+  const out = {};
+  // Pass 1: copy columns that are NOT aliased (exact schema field names have priority)
+  for (const [k, v] of Object.entries(normalizedRow)) {
+    if (!aliases[k]) out[k] = v;
+  }
+  // Pass 2: apply aliased columns without overwriting already-set fields
+  for (const [k, v] of Object.entries(normalizedRow)) {
+    const target = aliases[k];
+    if (target && !(target in out)) out[target] = v;
+  }
+  return out;
+}
+
 // ─── Duplicate detection (mirrors importRoutes.js) ───────────────────────────
 
 /**
@@ -337,7 +401,8 @@ export async function importCsv(importType, file) {
   if (errors.length && !data.length) {
     throw new Error(`CSV parse error: ${errors[0].message}`);
   }
-  return importRecords(importType, data);
+  const aliasedData = data.map((row) => applyColumnAliases(row, importType));
+  return importRecords(importType, aliasedData);
 }
 
 /**
@@ -393,11 +458,10 @@ export async function previewCsv(importType, file, aiOptions = {}) {
       console.error('CSV AI column mapping failed, falling back to key normalization:', aiErr.message);
     }
     mappedRecords = data.map((row) => {
-      const out = {};
-      for (const [k, v] of Object.entries(row)) {
-        out[k.toLowerCase().replace(/\s+/g, '_')] = v;
-      }
-      return out;
+      const normalized = Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [k.toLowerCase().replace(/\s+/g, '_'), v])
+      );
+      return applyColumnAliases(normalized, importType);
     });
     method = 'pattern';
   }
