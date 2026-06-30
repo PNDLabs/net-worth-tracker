@@ -151,6 +151,26 @@ function getExistingRecord(conn, importType, row) {
 }
 
 /**
+ * Returns the existing DB record (with id and current value) for a given entity ID.
+ * Used for manual alignment where the user explicitly selects the target record.
+ */
+function getExistingRecordById(conn, importType, id) {
+  if (importType === 'accounts') {
+    return conn.prepare('SELECT id, balance AS value FROM accounts WHERE id = ?').get(id);
+  }
+  if (importType === 'assets') {
+    return conn.prepare('SELECT id, current_value AS value FROM assets WHERE id = ?').get(id);
+  }
+  if (importType === 'liabilities') {
+    return conn.prepare('SELECT id, current_balance AS value FROM liabilities WHERE id = ?').get(id);
+  }
+  if (importType === 'insurance') {
+    return conn.prepare('SELECT id, coalesce(premium_amount, 0) AS value FROM insurance_plans WHERE id = ?').get(id);
+  }
+  return null;
+}
+
+/**
  * Update an existing record with new values from the import row,
  * recording the old value in value_history for historical tracking.
  * Wrapped in a transaction so the history insert and entity update are atomic.
@@ -602,6 +622,14 @@ router.post('/json', express.json({ limit: '10mb' }), (req, res) => {
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
+      if (row._alignWithId) {
+        const aligned = getExistingRecordById(conn, importType, row._alignWithId);
+        if (aligned) {
+          updateExistingRecord(conn, importType, row, aligned.id, aligned.value, defaultCurrency);
+          results.updated++;
+          continue;
+        }
+      }
       const existing = getExistingRecord(conn, importType, row);
       if (existing) {
         if (row._updateExisting) {
@@ -863,6 +891,14 @@ router.post('/pdf', upload.single('file'), async (req, res) => {
     for (let i = 0; i < parsed.records.length; i++) {
       const row = parsed.records[i];
       try {
+        if (row._alignWithId) {
+          const aligned = getExistingRecordById(conn, importType, row._alignWithId);
+          if (aligned) {
+            updateExistingRecord(conn, importType, row, aligned.id, aligned.value, defaultCurrency);
+            results.updated++;
+            continue;
+          }
+        }
         const existing = getExistingRecord(conn, importType, row);
         if (existing) {
           if (row._updateExisting) {
