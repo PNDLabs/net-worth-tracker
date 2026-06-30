@@ -19,6 +19,34 @@ function getCsvTemplates(currency) {
   };
 }
 
+// ─── Similarity helper ────────────────────────────────────────────────────────
+/**
+ * Sort existing records by name similarity to the given imported record.
+ * Records with a higher word overlap appear first; all records are returned
+ * so the user can still scroll to any record even when names don't match.
+ */
+function getSimilarRecords(records, importedRecord) {
+  if (!records || !records.length || !importedRecord?.name) return records;
+  const importedName = String(importedRecord.name).toLowerCase();
+  const words = importedName.split(/\W+/).filter((w) => w.length > 2);
+
+  const score = (rec) => {
+    if (!rec.name) return 0;
+    const recName = String(rec.name).toLowerCase();
+    if (recName === importedName) return 1000;
+    let s = 0;
+    // Reward substring containment
+    if (recName.includes(importedName) || importedName.includes(recName)) s += 10;
+    // Reward matching words
+    for (const w of words) {
+      if (recName.includes(w)) s += 2;
+    }
+    return s;
+  };
+
+  return [...records].sort((a, b) => score(b) - score(a));
+}
+
 // ─── PDF Preview Panel ────────────────────────────────────────────────────────
 function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
   const [importType, setImportType] = useState(preview.import_type);
@@ -133,6 +161,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     const newAction = newActions.get(i) || 'import';
     if (isBatchDup && (!action || action === 'skip')) return false;
     if (!isDup && !isBatchDup && newAction === 'skip') return false;
+    // Align without a chosen target record is treated as skip — otherwise a new record would be inserted.
+    // action covers duplicate rows; newAction covers genuinely new rows.
+    const alignWithoutTarget = !alignedRecords.get(i);
+    if ((action === 'align' || newAction === 'align') && alignWithoutTarget) return false;
     return true;
   };
 
@@ -149,7 +181,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
         finalRecords.push({ ...r, _updateExisting: true });
       } else if (action === 'align' || newAction === 'align') {
         const alignedId = alignedRecords.get(i);
-        finalRecords.push(alignedId ? { ...r, _alignWithId: alignedId } : r);
+        if (alignedId) {
+          finalRecords.push({ ...r, _alignWithId: alignedId });
+        }
+        // If no record was chosen the shouldImportRecord guard already excluded this row.
       } else {
         finalRecords.push(r);
       }
@@ -205,7 +240,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
             {!checkingDuplicates && duplicateIndices.size > 0 && (
               <div style={{ ...bannerBase, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 8 }}>
                 ⚠️ <strong>{duplicateIndices.size}</strong> record(s) already exist in the database.
-                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), <strong>Create new</strong>, or <strong>Manually align</strong> to link with any existing record.
+                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), or <strong>Create new</strong>.
               </div>
             )}
             {!checkingDuplicates && withinBatchIndices.size > 0 && (
@@ -235,7 +270,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
               const action = duplicateActions.get(i) || 'skip';
               const newAction = newActions.get(i) || 'import';
               const rowStyle = isDup
-                ? { background: action === 'update' || action === 'align' ? '#e8f5e9' : '#fff8e1' }
+                ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' }
                 : isBatchDup
                 ? { background: action === 'create' ? '#e3f2fd' : '#f3e5f5' }
                 : { background: newAction === 'skip' ? 'var(--color-surface-2)' : newAction === 'align' ? '#e0f2f1' : undefined };
@@ -251,7 +286,6 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                           { value: 'skip', label: '⏭ Skip', color: '#e65100' },
                           { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
                           { value: 'create', label: '➕ Create new', color: '#1565c0' },
-                          { value: 'align', label: '🔗 Manually align', color: '#00695c' },
                         ].map((opt) => (
                           <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
                             <input
@@ -266,18 +300,6 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                             </span>
                           </label>
                         ))}
-                        {action === 'align' && (
-                          <select
-                            style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
-                            value={alignedRecords.get(i) || ''}
-                            onChange={(e) => handleAlignChange(i, e)}
-                          >
-                            <option value="">— pick existing record —</option>
-                            {existingRecords.map((rec) => (
-                              <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
-                            ))}
-                          </select>
-                        )}
                       </div>
                     ) : isBatchDup ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -321,16 +343,28 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                           </label>
                         ))}
                         {newAction === 'align' && (
-                          <select
-                            style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
-                            value={alignedRecords.get(i) || ''}
-                            onChange={(e) => handleAlignChange(i, e)}
-                          >
-                            <option value="">— pick existing record —</option>
-                            {existingRecords.map((rec) => (
-                              <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
-                            ))}
-                          </select>
+                          <>
+                            <select
+                              style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
+                              value={alignedRecords.get(i) || ''}
+                              onChange={(e) => handleAlignChange(i, e)}
+                            >
+                              <option value="">— pick a record (sorted by similarity) —</option>
+                              {getSimilarRecords(existingRecords, r).map((rec) => (
+                                <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
+                              ))}
+                            </select>
+                            {alignedRecords.get(i) && (
+                              <span style={{ fontSize: 10, color: '#2e7d32', marginTop: 2 }}>
+                                🔄 Will update existing record (saves old value to history)
+                              </span>
+                            )}
+                            {!alignedRecords.get(i) && (
+                              <span style={{ fontSize: 10, color: '#e65100', marginTop: 2 }}>
+                                ⚠️ Pick a record above — this row will be skipped until one is selected
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
