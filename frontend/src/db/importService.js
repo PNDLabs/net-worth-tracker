@@ -139,6 +139,31 @@ async function isDuplicateRecord(importType, row) {
 }
 
 /**
+ * Returns the existing DB record (with id and current value) for a given entity ID.
+ * Used for manual alignment where the user explicitly selects the target record.
+ */
+async function getExistingRecordById(importType, id) {
+  if (!id || typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
+  if (importType === 'accounts') {
+    const rows = await query('SELECT id, balance AS value FROM accounts WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+  if (importType === 'assets') {
+    const rows = await query('SELECT id, current_value AS value FROM assets WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+  if (importType === 'liabilities') {
+    const rows = await query('SELECT id, current_balance AS value FROM liabilities WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+  if (importType === 'insurance') {
+    const rows = await query('SELECT id, coalesce(premium_amount, 0) AS value FROM insurance_plans WHERE id = ?', [id]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+  return null;
+}
+
+/**
  * Check which records (by index) are duplicates in the local SQLite DB or within the batch.
  * Returns { duplicates: [index, ...], withinBatch: [index, ...] }.
  *   duplicates  – indices of records already present in the DB.
@@ -368,6 +393,14 @@ export async function importRecords(importType, records) {
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     try {
+      if (row._alignWithId) {
+        const aligned = await getExistingRecordById(importType, row._alignWithId);
+        if (aligned) {
+          await updateRow(importType, row, aligned.id, aligned.value, defaultCurrency);
+          results.updated++;
+          continue;
+        }
+      }
       const existing = await getExistingRecord(importType, row);
       if (existing) {
         if (row._updateExisting) {
