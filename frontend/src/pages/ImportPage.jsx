@@ -162,8 +162,9 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     if (isBatchDup && (!action || action === 'skip')) return false;
     if (!isDup && !isBatchDup && newAction === 'skip') return false;
     // Align without a chosen target record is treated as skip — otherwise a new record would be inserted.
-    if (action === 'align' && !alignedRecords.get(i)) return false;
-    if (!isDup && !isBatchDup && newAction === 'align' && !alignedRecords.get(i)) return false;
+    // action covers duplicate rows; newAction covers genuinely new rows.
+    const alignWithoutTarget = !alignedRecords.get(i);
+    if ((action === 'align' || newAction === 'align') && alignWithoutTarget) return false;
     return true;
   };
 
@@ -306,7 +307,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                             value={alignedRecords.get(i) || ''}
                             onChange={(e) => handleAlignChange(i, e)}
                           >
-                            <option value="">— pick similar record —</option>
+                            <option value="">— pick a record (sorted by similarity) —</option>
                             {getSimilarRecords(existingRecords, r).map((rec) => (
                               <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
                             ))}
@@ -361,7 +362,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                               value={alignedRecords.get(i) || ''}
                               onChange={(e) => handleAlignChange(i, e)}
                             >
-                              <option value="">— pick similar record —</option>
+                              <option value="">— pick a record (sorted by similarity) —</option>
                               {getSimilarRecords(existingRecords, r).map((rec) => (
                                 <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
                               ))}
