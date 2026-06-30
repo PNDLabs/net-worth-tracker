@@ -240,7 +240,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
             {!checkingDuplicates && duplicateIndices.size > 0 && (
               <div style={{ ...bannerBase, background: '#fff3e0', color: '#e65100', border: '1px solid #ffcc80', marginBottom: 8 }}>
                 ⚠️ <strong>{duplicateIndices.size}</strong> record(s) already exist in the database.
-                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), <strong>Create new</strong>, or <strong>Manually align</strong> to link with any existing record.
+                For each, choose: <strong>Skip</strong> (default), <strong>Update existing</strong> (saves old value to history), or <strong>Create new</strong>.
               </div>
             )}
             {!checkingDuplicates && withinBatchIndices.size > 0 && (
@@ -270,7 +270,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
               const action = duplicateActions.get(i) || 'skip';
               const newAction = newActions.get(i) || 'import';
               const rowStyle = isDup
-                ? { background: action === 'update' || action === 'align' ? '#e8f5e9' : '#fff8e1' }
+                ? { background: action === 'update' ? '#e8f5e9' : '#fff8e1' }
                 : isBatchDup
                 ? { background: action === 'create' ? '#e3f2fd' : '#f3e5f5' }
                 : { background: newAction === 'skip' ? 'var(--color-surface-2)' : newAction === 'align' ? '#e0f2f1' : undefined };
@@ -286,7 +286,6 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                           { value: 'skip', label: '⏭ Skip', color: '#e65100' },
                           { value: 'update', label: '🔄 Update existing', color: '#2e7d32' },
                           { value: 'create', label: '➕ Create new', color: '#1565c0' },
-                          { value: 'align', label: '🔗 Manually align', color: '#00695c' },
                         ].map((opt) => (
                           <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
                             <input
@@ -301,18 +300,6 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                             </span>
                           </label>
                         ))}
-                        {action === 'align' && (
-                          <select
-                            style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
-                            value={alignedRecords.get(i) || ''}
-                            onChange={(e) => handleAlignChange(i, e)}
-                          >
-                            <option value="">— pick a record (sorted by similarity) —</option>
-                            {getSimilarRecords(existingRecords, r).map((rec) => (
-                              <option key={rec.id} value={rec.id}>{getRecordLabel(rec)}</option>
-                            ))}
-                          </select>
-                        )}
                       </div>
                     ) : isBatchDup ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
