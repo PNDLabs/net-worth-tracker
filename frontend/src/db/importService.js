@@ -143,6 +143,7 @@ async function isDuplicateRecord(importType, row) {
  * Used for manual alignment where the user explicitly selects the target record.
  */
 async function getExistingRecordById(importType, id) {
+  if (!id || typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
   if (importType === 'accounts') {
     const rows = await query('SELECT id, balance AS value FROM accounts WHERE id = ?', [id]);
     return rows.length > 0 ? rows[0] : null;

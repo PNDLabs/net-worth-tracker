@@ -84,7 +84,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
     };
     const fetch = fetchers[importType];
     if (fetch) {
-      fetch().then(setExistingRecords).catch(() => setExistingRecords([]));
+      fetch().then(setExistingRecords).catch((err) => {
+        console.error('Failed to fetch existing records for align dropdown:', err);
+        setExistingRecords([]);
+      });
     }
     setAlignedRecords(new Map());
   }, [importType]);
@@ -111,6 +114,10 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
       next.set(idx, id);
       return next;
     });
+  };
+
+  const handleAlignChange = (idx, e) => {
+    setAlignedRecord(idx, e.target.value ? Number(e.target.value) : null);
   };
 
   const getRecordLabel = (rec) => {
@@ -263,7 +270,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                           <select
                             style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
                             value={alignedRecords.get(i) || ''}
-                            onChange={(e) => setAlignedRecord(i, e.target.value ? Number(e.target.value) : null)}
+                            onChange={(e) => handleAlignChange(i, e)}
                           >
                             <option value="">— pick existing record —</option>
                             {existingRecords.map((rec) => (
@@ -317,7 +324,7 @@ function PdfPreviewPanel({ preview, onConfirm, onCancel, loading }) {
                           <select
                             style={{ fontSize: 11, marginTop: 4, maxWidth: 180 }}
                             value={alignedRecords.get(i) || ''}
-                            onChange={(e) => setAlignedRecord(i, e.target.value ? Number(e.target.value) : null)}
+                            onChange={(e) => handleAlignChange(i, e)}
                           >
                             <option value="">— pick existing record —</option>
                             {existingRecords.map((rec) => (

@@ -155,6 +155,7 @@ function getExistingRecord(conn, importType, row) {
  * Used for manual alignment where the user explicitly selects the target record.
  */
 function getExistingRecordById(conn, importType, id) {
+  if (!id || typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
   if (importType === 'accounts') {
     return conn.prepare('SELECT id, balance AS value FROM accounts WHERE id = ?').get(id);
   }
