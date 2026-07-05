@@ -5,28 +5,144 @@ const db = require('../db/database');
 // Account types that are purely cash/deposit (no investment component).
 // Investment account types: money_market, brokerage, 401k, ira, roth_ira, pension, other
 const CASH_ACCOUNT_TYPES = ['checking', 'savings', 'cd'];
+const DEFAULT_FAMILY_MEMBER = 'Self';
+
+function normalizedMemberName(name) {
+  if (typeof name !== 'string') return DEFAULT_FAMILY_MEMBER;
+  const normalized = name.trim().replace(/\s+/g, ' ');
+  if (!normalized) return DEFAULT_FAMILY_MEMBER;
+  const lower = normalized.toLowerCase();
+  if (lower === 'self' || lower === 'you') return DEFAULT_FAMILY_MEMBER;
+  return normalized
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
 
 function calcNetWorth(conn) {
   const cashPlaceholders = CASH_ACCOUNT_TYPES.map(() => '?').join(',');
-  const cashTotal = conn.prepare(
-    `SELECT COALESCE(SUM(balance), 0) as total FROM accounts WHERE type IN (${cashPlaceholders})`
-  ).get(...CASH_ACCOUNT_TYPES).total;
-  const investmentAccountsTotal = conn.prepare(
-    `SELECT COALESCE(SUM(balance), 0) as total FROM accounts WHERE type NOT IN (${cashPlaceholders})`
-  ).get(...CASH_ACCOUNT_TYPES).total;
-  // Keep accountsTotal for snapshot compatibility
-  const accountsTotal = cashTotal + investmentAccountsTotal;
-  const holdingsTotal = conn.prepare(
-    `SELECT COALESCE(SUM(COALESCE(current_value, shares * COALESCE(current_price, 0))), 0) as total FROM holdings`
-  ).get().total;
-  const assetsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM assets').get().total;
+  let cashTotal = 0;
+  let investmentAccountsTotal = 0;
+  let holdingsTotal = 0;
+  let assetsTotal = 0;
   const metalsTotal = conn.prepare('SELECT COALESCE(SUM(current_value), 0) as total FROM precious_metals').get().total;
-  const liabilitiesTotal = conn.prepare('SELECT COALESCE(SUM(ABS(current_balance)), 0) as total FROM liabilities').get().total;
+  let liabilitiesTotal = 0;
+  const membersMap = new Map();
+
+  const memberSummary = (memberName) => {
+    const key = normalizedMemberName(memberName);
+    if (!membersMap.has(key)) {
+      membersMap.set(key, {
+        name: key,
+        cashTotal: 0,
+        investmentAccountsTotal: 0,
+        accountsTotal: 0,
+        holdingsTotal: 0,
+        assetsTotal: 0,
+        metalsTotal: 0,
+        totalAssets: 0,
+        totalLiabilities: 0,
+        netWorth: 0,
+      });
+    }
+    return membersMap.get(key);
+  };
+
+  const accounts = conn.prepare(
+    `SELECT
+       type,
+       COALESCE(balance, 0) AS balance,
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
+     FROM accounts`
+  ).all(DEFAULT_FAMILY_MEMBER);
+  for (const account of accounts) {
+    const balance = Number(account.balance || 0);
+    const member = memberSummary(account.family_member);
+    member.accountsTotal += balance;
+    if (CASH_ACCOUNT_TYPES.includes(account.type)) {
+      cashTotal += balance;
+      member.cashTotal += balance;
+    } else {
+      investmentAccountsTotal += balance;
+      member.investmentAccountsTotal += balance;
+    }
+  }
+  const accountsTotal = cashTotal + investmentAccountsTotal;
+
+  const holdings = conn.prepare(
+    `SELECT
+       COALESCE(NULLIF(TRIM(a.family_member), ''), ?) AS family_member,
+       COALESCE(h.current_value, h.shares * COALESCE(h.current_price, 0), 0) AS value
+     FROM holdings h
+     JOIN accounts a ON a.id = h.account_id`
+  ).all(DEFAULT_FAMILY_MEMBER);
+  for (const holding of holdings) {
+    const value = Number(holding.value || 0);
+    holdingsTotal += value;
+    memberSummary(holding.family_member).holdingsTotal += value;
+  }
+
+  const assets = conn.prepare(
+    `SELECT
+       COALESCE(current_value, 0) AS value,
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
+     FROM assets`
+  ).all(DEFAULT_FAMILY_MEMBER);
+  for (const asset of assets) {
+    const value = Number(asset.value || 0);
+    assetsTotal += value;
+    memberSummary(asset.family_member).assetsTotal += value;
+  }
+
+  const liabilities = conn.prepare(
+    `SELECT
+       ABS(COALESCE(current_balance, 0)) AS value,
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
+     FROM liabilities`
+  ).all(DEFAULT_FAMILY_MEMBER);
+  for (const liability of liabilities) {
+    const value = Number(liability.value || 0);
+    liabilitiesTotal += value;
+    memberSummary(liability.family_member).totalLiabilities += value;
+  }
+
   const totalAssets = accountsTotal + holdingsTotal + assetsTotal + metalsTotal;
   const totalLiabilities = liabilitiesTotal;
-  const netWorth = totalAssets - totalLiabilities;
+  const familyNetWorth = totalAssets - totalLiabilities;
+  const netWorth = familyNetWorth;
 
-  return { cashTotal, investmentAccountsTotal, accountsTotal, holdingsTotal, assetsTotal, metalsTotal, totalAssets, totalLiabilities, netWorth };
+  const members = Array.from(membersMap.values())
+    .map((member) => {
+      const totalMemberAssets =
+        member.accountsTotal +
+        member.holdingsTotal +
+        member.assetsTotal +
+        member.metalsTotal;
+      return {
+        ...member,
+        totalAssets: totalMemberAssets,
+        netWorth: totalMemberAssets - member.totalLiabilities,
+      };
+    })
+    .sort((a, b) => {
+      if (a.name === DEFAULT_FAMILY_MEMBER) return -1;
+      if (b.name === DEFAULT_FAMILY_MEMBER) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  return {
+    cashTotal,
+    investmentAccountsTotal,
+    accountsTotal,
+    holdingsTotal,
+    assetsTotal,
+    metalsTotal,
+    totalAssets,
+    totalLiabilities,
+    netWorth,
+    familyNetWorth,
+    members,
+  };
 }
 
 // GET /api/networth

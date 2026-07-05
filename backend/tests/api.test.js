@@ -39,6 +39,7 @@ describe('Accounts API', () => {
     expect(res.status).toBe(201);
     expect(res.body.name).toBe('Chase Checking');
     expect(res.body.balance).toBe(5000);
+    expect(res.body.family_member).toBe('Self');
     expect(res.body.id).toBeDefined();
   });
 
@@ -237,6 +238,40 @@ describe('Net Worth API', () => {
     expect(res.body.totalAssets).toBe(30000);
     expect(res.body.totalLiabilities).toBe(5000);
     expect(res.body.netWorth).toBe(25000);
+  });
+
+  test('GET /api/networth - returns family member net worth breakdown', async () => {
+    const spouseAccount = await request(app).post('/api/accounts').send({
+      name: 'Spouse Brokerage',
+      type: 'brokerage',
+      balance: 1000,
+      family_member: ' spouse ',
+    });
+    await request(app).post(`/api/accounts/${spouseAccount.body.id}/holdings`).send({
+      symbol: 'VTI',
+      shares: 2,
+      current_price: 100,
+    });
+    await request(app).post('/api/assets').send({
+      name: 'Family Home',
+      category: 'real_estate',
+      current_value: 200000,
+      family_member: 'Self',
+    });
+    await request(app).post('/api/liabilities').send({
+      name: 'Family Mortgage',
+      type: 'mortgage',
+      current_balance: 50000,
+      family_member: 'Self',
+    });
+
+    const res = await request(app).get('/api/networth');
+    expect(res.status).toBe(200);
+    expect(res.body.familyNetWorth).toBe(151200);
+    expect(res.body.members).toEqual([
+      expect.objectContaining({ name: 'Self', totalAssets: 200000, totalLiabilities: 50000, netWorth: 150000 }),
+      expect.objectContaining({ name: 'Spouse', totalAssets: 1200, totalLiabilities: 0, netWorth: 1200 }),
+    ]);
   });
 
   test('POST /api/networth/snapshots - creates a snapshot', async () => {

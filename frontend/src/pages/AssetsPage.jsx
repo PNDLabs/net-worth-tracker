@@ -5,7 +5,7 @@ import { useCurrency } from '../hooks/CurrencyContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const CATEGORIES = ['real_estate', 'vehicle', 'crypto', 'collectible', 'business', 'other'];
-const EMPTY = { name: '', category: 'other', acquisition_date: '', acquisition_cost: '', current_value: '', notes: '' };
+const EMPTY = { name: '', category: 'other', acquisition_date: '', acquisition_cost: '', current_value: '', family_member: 'Self', notes: '' };
 
 export default function AssetsPage() {
   const [assets, setAssets] = useState([]);
@@ -23,7 +23,19 @@ export default function AssetsPage() {
   useEffect(() => { load(); }, []);
 
   function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); setError(''); }
-  function openEdit(a) { setEditing(a); setForm({ ...a, acquisition_date: a.acquisition_date || '', acquisition_cost: a.acquisition_cost ?? '', current_value: a.current_value, notes: a.notes || '' }); setShowModal(true); setError(''); }
+  function openEdit(a) {
+    setEditing(a);
+    setForm({
+      ...a,
+      acquisition_date: a.acquisition_date || '',
+      acquisition_cost: a.acquisition_cost ?? '',
+      current_value: a.current_value,
+      family_member: a.family_member || 'Self',
+      notes: a.notes || ''
+    });
+    setShowModal(true);
+    setError('');
+  }
 
   async function save() {
     try {
@@ -78,6 +90,7 @@ export default function AssetsPage() {
               <thead>
                 <tr>
                   <th>Name</th><th>Category</th><th className="hide-mobile">Acquired</th>
+                  <th className="hide-mobile">Family Member</th>
                   <th className="hide-mobile" style={{ textAlign: 'right' }}>Cost Basis</th>
                   <th style={{ textAlign: 'right' }}>Current Value</th>
                   <th style={{ textAlign: 'right' }}>Gain/Loss</th>
@@ -93,6 +106,7 @@ export default function AssetsPage() {
                         <td><strong>{a.name}</strong>{a.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{a.notes}</div>}</td>
                         <td><span className={`badge badge-${a.category}`}>{typeLabel(a.category)}</span></td>
                         <td className="hide-mobile">{formatDate(a.acquisition_date)}</td>
+                        <td className="hide-mobile">{a.family_member || 'Self'}</td>
                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{a.acquisition_cost != null ? fmt(a.acquisition_cost) : '—'}</td>
                         <td style={{ textAlign: 'right' }} className="amount positive">{fmt(a.current_value)}</td>
                         <td style={{ textAlign: 'right' }} className={`amount ${gl == null ? '' : gl >= 0 ? 'positive' : 'negative'}`}>
@@ -108,7 +122,7 @@ export default function AssetsPage() {
                       </tr>
                       {historyId === a.id && (
                         <tr key={`vh-${a.id}`}>
-                          <td colSpan={7} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                          <td colSpan={8} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
                             {(() => {
                               const d = historyData[a.id];
                               if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
@@ -176,6 +190,10 @@ export default function AssetsPage() {
               <div className="form-group">
                 <label>Acquisition Date</label>
                 <input type="date" value={form.acquisition_date} onChange={(e) => setForm({ ...form, acquisition_date: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Family Member</label>
+                <input value={form.family_member} onChange={(e) => setForm({ ...form, family_member: e.target.value })} placeholder="Self / Spouse / Child" />
               </div>
               <div className="form-group">
                 <label>Cost Basis{currency ? ` (${currency})` : ''}</label>

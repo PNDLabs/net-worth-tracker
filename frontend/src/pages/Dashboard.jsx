@@ -40,6 +40,10 @@ export default function Dashboard() {
   }
 
   if (loading) return <div className="loading-center"><div className="spinner" /></div>;
+  const members = summary?.members || [];
+  const selfMember = members.find((member) => member.name === 'Self');
+  const personalNetWorth = selfMember?.netWorth ?? summary?.netWorth ?? 0;
+  const familyNetWorth = summary?.familyNetWorth ?? summary?.netWorth ?? 0;
 
   const pieData = summary ? [
     { name: 'Cash & Savings', value: summary.cashTotal },
@@ -70,8 +74,12 @@ export default function Dashboard() {
           <div className="value">{fmt(summary?.totalLiabilities)}</div>
         </div>
         <div className="card stat-card net">
-          <div className="label">Net Worth</div>
-          <div className="value">{fmt(summary?.netWorth)}</div>
+          <div className="label">Your Net Worth</div>
+          <div className="value">{fmt(personalNetWorth)}</div>
+        </div>
+        <div className="card stat-card net">
+          <div className="label">Family Net Worth</div>
+          <div className="value">{fmt(familyNetWorth)}</div>
         </div>
       </div>
 
@@ -109,6 +117,40 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="section-title">Family Member Net Worth</div>
+        {members.length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Member</th>
+                <th style={{ textAlign: 'right' }}>Assets</th>
+                <th style={{ textAlign: 'right' }}>Liabilities</th>
+                <th style={{ textAlign: 'right' }}>Net Worth</th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map((member) => (
+                <tr key={member.name}>
+                  <td>{member.name === 'Self' ? 'You' : member.name}</td>
+                  <td className="amount positive" style={{ textAlign: 'right' }}>{fmt(member.totalAssets)}</td>
+                  <td className="amount negative" style={{ textAlign: 'right' }}>−{fmt(member.totalLiabilities)}</td>
+                  <td className="amount" style={{ textAlign: 'right', color: 'var(--color-net)' }}>{fmt(member.netWorth)}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: '2px solid var(--color-border)' }}>
+                <td><strong>Total Family</strong></td>
+                <td className="amount positive" style={{ textAlign: 'right' }}><strong>{fmt(summary?.totalAssets)}</strong></td>
+                <td className="amount negative" style={{ textAlign: 'right' }}><strong>−{fmt(summary?.totalLiabilities)}</strong></td>
+                <td className="amount" style={{ textAlign: 'right', color: 'var(--color-net)' }}><strong>{fmt(familyNetWorth)}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-state"><p>No member data yet. Add family-member tagged accounts or assets.</p></div>
+        )}
       </div>
 
       {/* Trend chart */}
