@@ -9,8 +9,14 @@ const DEFAULT_FAMILY_MEMBER = 'Self';
 
 function normalizedMemberName(name) {
   if (typeof name !== 'string') return DEFAULT_FAMILY_MEMBER;
-  const normalized = name.trim();
-  return normalized || DEFAULT_FAMILY_MEMBER;
+  const normalized = name.trim().replace(/\s+/g, ' ');
+  if (!normalized) return DEFAULT_FAMILY_MEMBER;
+  const lower = normalized.toLowerCase();
+  if (lower === 'self' || lower === 'you') return DEFAULT_FAMILY_MEMBER;
+  return normalized
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
 }
 
 function calcNetWorth(conn) {
@@ -46,9 +52,9 @@ function calcNetWorth(conn) {
     `SELECT
        type,
        COALESCE(balance, 0) AS balance,
-       COALESCE(NULLIF(TRIM(family_member), ''), '${DEFAULT_FAMILY_MEMBER}') AS family_member
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
      FROM accounts`
-  ).all();
+  ).all(DEFAULT_FAMILY_MEMBER);
   for (const account of accounts) {
     const balance = Number(account.balance || 0);
     const member = memberSummary(account.family_member);
@@ -65,11 +71,11 @@ function calcNetWorth(conn) {
 
   const holdings = conn.prepare(
     `SELECT
-       COALESCE(NULLIF(TRIM(a.family_member), ''), '${DEFAULT_FAMILY_MEMBER}') AS family_member,
+       COALESCE(NULLIF(TRIM(a.family_member), ''), ?) AS family_member,
        COALESCE(h.current_value, h.shares * COALESCE(h.current_price, 0), 0) AS value
      FROM holdings h
      JOIN accounts a ON a.id = h.account_id`
-  ).all();
+  ).all(DEFAULT_FAMILY_MEMBER);
   for (const holding of holdings) {
     const value = Number(holding.value || 0);
     holdingsTotal += value;
@@ -79,9 +85,9 @@ function calcNetWorth(conn) {
   const assets = conn.prepare(
     `SELECT
        COALESCE(current_value, 0) AS value,
-       COALESCE(NULLIF(TRIM(family_member), ''), '${DEFAULT_FAMILY_MEMBER}') AS family_member
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
      FROM assets`
-  ).all();
+  ).all(DEFAULT_FAMILY_MEMBER);
   for (const asset of assets) {
     const value = Number(asset.value || 0);
     assetsTotal += value;
@@ -91,9 +97,9 @@ function calcNetWorth(conn) {
   const liabilities = conn.prepare(
     `SELECT
        ABS(COALESCE(current_balance, 0)) AS value,
-       COALESCE(NULLIF(TRIM(family_member), ''), '${DEFAULT_FAMILY_MEMBER}') AS family_member
+       COALESCE(NULLIF(TRIM(family_member), ''), ?) AS family_member
      FROM liabilities`
-  ).all();
+  ).all(DEFAULT_FAMILY_MEMBER);
   for (const liability of liabilities) {
     const value = Number(liability.value || 0);
     liabilitiesTotal += value;

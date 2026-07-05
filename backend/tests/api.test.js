@@ -245,7 +245,7 @@ describe('Net Worth API', () => {
       name: 'Spouse Brokerage',
       type: 'brokerage',
       balance: 1000,
-      family_member: 'Spouse',
+      family_member: ' spouse ',
     });
     await request(app).post(`/api/accounts/${spouseAccount.body.id}/holdings`).send({
       symbol: 'VTI',
