@@ -5,6 +5,7 @@ A full-stack web application to track your personal net worth across all financi
 ## Features
 
 - 📊 **Dashboard** — real-time net worth, asset/liability breakdown, and trend charts
+- 👨‍👩‍👧 **Family Net Worth** — track net worth by family member with total family roll-up
 - 🏦 **Accounts** — bank accounts (checking, savings, CDs) and investment accounts (brokerage, 401k, IRA, Roth IRA) with individual holdings
 - 🏠 **Assets** — real estate, vehicles, crypto, collectibles, business interests
 - 💳 **Liabilities** — mortgage, auto loans, student loans, credit cards, HELOCs

@@ -3,6 +3,13 @@ const router = express.Router();
 const db = require('../db/database');
 
 const VALID_TYPES = ['mortgage', 'auto', 'student', 'personal', 'credit_card', 'heloc', 'other'];
+const DEFAULT_FAMILY_MEMBER = 'Self';
+
+function normalizeFamilyMember(value) {
+  if (typeof value !== 'string') return DEFAULT_FAMILY_MEMBER;
+  const normalized = value.trim();
+  return normalized || DEFAULT_FAMILY_MEMBER;
+}
 
 // GET /api/liabilities
 router.get('/', (req, res) => {
@@ -22,7 +29,7 @@ router.post('/', (req, res) => {
   const {
     name, lender, type = 'other',
     original_principal, current_balance = 0,
-    interest_rate, minimum_payment, notes
+    interest_rate, minimum_payment, family_member = DEFAULT_FAMILY_MEMBER, notes
   } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -37,14 +44,15 @@ router.post('/', (req, res) => {
   if (duplicate) return res.status(409).json({ error: 'A liability with the same name and lender already exists' });
 
   const result = conn.prepare(
-    `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO liabilities (name, lender, type, original_principal, current_balance, interest_rate, minimum_payment, family_member, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     name, lender || null, type,
     original_principal != null ? Number(original_principal) : null,
     Number(current_balance),
     interest_rate != null ? Number(interest_rate) : null,
     minimum_payment != null ? Number(minimum_payment) : null,
+    normalizeFamilyMember(family_member),
     notes || null
   );
 
@@ -62,7 +70,7 @@ router.put('/:id', (req, res) => {
   const existing = conn.prepare('SELECT * FROM liabilities WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Liability not found' });
 
-  const { name, lender, type, original_principal, current_balance, interest_rate, minimum_payment, notes } = req.body;
+  const { name, lender, type, original_principal, current_balance, interest_rate, minimum_payment, family_member, notes } = req.body;
   const updated = {
     name: name !== undefined ? name : existing.name,
     lender: lender !== undefined ? lender : existing.lender,
@@ -71,6 +79,7 @@ router.put('/:id', (req, res) => {
     current_balance: current_balance !== undefined ? Number(current_balance) : existing.current_balance,
     interest_rate: interest_rate !== undefined ? Number(interest_rate) : existing.interest_rate,
     minimum_payment: minimum_payment !== undefined ? Number(minimum_payment) : existing.minimum_payment,
+    family_member: family_member !== undefined ? normalizeFamilyMember(family_member) : existing.family_member,
     notes: notes !== undefined ? notes : existing.notes,
   };
 
@@ -78,12 +87,12 @@ router.put('/:id', (req, res) => {
 
   conn.prepare(
     `UPDATE liabilities SET name=?, lender=?, type=?, original_principal=?,
-     current_balance=?, interest_rate=?, minimum_payment=?, notes=?,
+     current_balance=?, interest_rate=?, minimum_payment=?, family_member=?, notes=?,
      updated_at=datetime('now') WHERE id=?`
   ).run(
     updated.name, updated.lender, updated.type, updated.original_principal,
     updated.current_balance, updated.interest_rate, updated.minimum_payment,
-    updated.notes, req.params.id
+    updated.family_member, updated.notes, req.params.id
   );
 
   if (updated.current_balance !== existing.current_balance) {

@@ -24,8 +24,9 @@ const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
  *   7 – insurance_plans: added fund_value (investment component of market-linked
  *       policies such as ULIPs) and linked_account_id (FK to accounts for the
  *       auto-created brokerage account that tracks the fund value in net worth)
+ *   8 – accounts/assets/liabilities: added family_member for family net worth
  */
-const DB_SCHEMA_VERSION = 7;
+const DB_SCHEMA_VERSION = 8;
 
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
@@ -47,6 +48,7 @@ function runMigrations(db) {
       type         TEXT    NOT NULL DEFAULT 'checking',
       currency     TEXT    NOT NULL DEFAULT 'USD',
       balance      REAL    NOT NULL DEFAULT 0,
+      family_member TEXT   NOT NULL DEFAULT 'Self',
       notes        TEXT,
       created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -73,6 +75,7 @@ function runMigrations(db) {
       acquisition_date TEXT,
       acquisition_cost REAL,
       current_value    REAL    NOT NULL DEFAULT 0,
+      family_member    TEXT    NOT NULL DEFAULT 'Self',
       notes            TEXT,
       created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -87,6 +90,7 @@ function runMigrations(db) {
       current_balance    REAL    NOT NULL DEFAULT 0,
       interest_rate      REAL,
       minimum_payment    REAL,
+      family_member      TEXT    NOT NULL DEFAULT 'Self',
       notes              TEXT,
       created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
       updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -172,6 +176,9 @@ function runMigrations(db) {
   // Schema v7: market-linked insurance (ULIP) fund value and linked brokerage account.
   addColumnIfMissing('insurance_plans', 'fund_value', 'REAL');
   addColumnIfMissing('insurance_plans', 'linked_account_id', 'INTEGER REFERENCES accounts(id) ON DELETE SET NULL');
+  addColumnIfMissing('accounts', 'family_member', "TEXT NOT NULL DEFAULT 'Self'");
+  addColumnIfMissing('assets', 'family_member', "TEXT NOT NULL DEFAULT 'Self'");
+  addColumnIfMissing('liabilities', 'family_member', "TEXT NOT NULL DEFAULT 'Self'");
 
   // Schema v6: remove sip_installments table (SIP tracking removed).
   // DROP IF EXISTS is safe to run on every startup.

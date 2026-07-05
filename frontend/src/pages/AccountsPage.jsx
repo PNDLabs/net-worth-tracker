@@ -62,7 +62,7 @@ export default function AccountsPage() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: '', balance: '', notes: '' }));
+  const [form, setForm] = useState(() => ({ name: '', institution: '', type: 'checking', currency: '', balance: '', family_member: 'Self', notes: '' }));
   const [expandedId, setExpandedId] = useState(null);
   const [holdings, setHoldings] = useState({});
   const [showHoldingModal, setShowHoldingModal] = useState(false);
@@ -101,7 +101,11 @@ export default function AccountsPage() {
   const visibleAccounts = accounts
     .filter((a) => {
       const q = filterText.toLowerCase();
-      const matchText = !q || a.name.toLowerCase().includes(q) || (a.institution || '').toLowerCase().includes(q);
+      const matchText =
+        !q ||
+        a.name.toLowerCase().includes(q) ||
+        (a.institution || '').toLowerCase().includes(q) ||
+        (a.family_member || '').toLowerCase().includes(q);
       const matchType = !filterType || a.type === filterType;
       return matchText && matchType;
     })
@@ -130,7 +134,7 @@ export default function AccountsPage() {
   // Per-type count across all accounts (not just filtered) for the chip strip
   const typeCounts = accounts.reduce((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {});
 
-  const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', notes: '' });
+  const makeEmpty = () => ({ name: '', institution: '', type: 'checking', currency, balance: '', family_member: 'Self', notes: '' });
 
   const load = () => api.getAccounts().then(setAccounts).catch(e => setError(e.message)).finally(() => setLoading(false));
 
@@ -250,6 +254,7 @@ export default function AccountsPage() {
                 <tr>
                   <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('name')}>Name<SortIcon col="name" /></th>
                   <th className="hide-mobile" style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('institution')}>Institution<SortIcon col="institution" /></th>
+                  <th className="hide-mobile">Family Member</th>
                   <th className="hide-mobile">Currency</th>
                   <th style={{ textAlign: 'right', cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSort('balance')}>Balance<SortIcon col="balance" /></th>
                   <th style={{ width: 40 }}></th>
@@ -257,12 +262,12 @@ export default function AccountsPage() {
               </thead>
               <tbody>
                 {visibleAccounts.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 24 }}>No accounts match the current filters.</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 24 }}>No accounts match the current filters.</td></tr>
                 ) : groupedAccounts.map(({ type, accounts: groupAccs, total }) => (
                   <Fragment key={type}>
                     {/* Group header row – click to collapse/expand */}
                     <tr className="group-header-row" onClick={() => toggleGroup(type)}>
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         <div className="group-header-inner">
                           <span className="group-chevron">{collapsedGroups.has(type) ? '▶' : '▼'}</span>
                           <span className={`badge badge-${type}`}>{typeLabel(type)}</span>
@@ -289,8 +294,10 @@ export default function AccountsPage() {
                             )}
                             <strong>{acc.name}</strong>
                             {acc.institution && <span className="show-mobile-only account-institution"><span className="institution-sep"> · </span>{acc.institution}</span>}
+                            {acc.family_member && <span className="show-mobile-only account-institution"><span className="institution-sep"> · </span>{acc.family_member}</span>}
                           </td>
                           <td className="hide-mobile">{acc.institution || '—'}</td>
+                          <td className="hide-mobile">{acc.family_member || 'Self'}</td>
                           <td className="hide-mobile">{acc.currency}</td>
                           <td className="td-balance amount" style={{ textAlign: 'right' }}>{fmt(acc.balance)}</td>
                           <td className="td-actions">
@@ -307,7 +314,7 @@ export default function AccountsPage() {
                         {/* Holdings expanded row */}
                         {INVESTMENT_ACCOUNT_TYPES.has(acc.type) && expandedId === acc.id && (
                           <tr className="expand-row">
-                            <td colSpan={5} style={{ padding: '0 24px 12px', background: 'var(--color-surface-2)' }}>
+                            <td colSpan={6} style={{ padding: '0 24px 12px', background: 'var(--color-surface-2)' }}>
                               {holdings[acc.id]?.length > 0 ? (
                                 <table style={{ marginTop: 8 }}>
                                   <thead><tr><th>Symbol</th><th>Name</th><th>Shares</th><th style={{ textAlign: 'right' }}>Price</th><th style={{ textAlign: 'right' }}>Value</th></tr></thead>
@@ -331,7 +338,7 @@ export default function AccountsPage() {
                         {/* History expanded row */}
                         {historyId === acc.id && (
                           <tr className="expand-row">
-                            <td colSpan={5} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                            <td colSpan={6} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
                               {(() => {
                                 const d = historyData[acc.id];
                                 if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
@@ -402,6 +409,10 @@ export default function AccountsPage() {
                 <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                   {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
                 </select>
+              </div>
+              <div className="form-group">
+                <label>Family Member</label>
+                <input value={form.family_member} onChange={(e) => setForm({ ...form, family_member: e.target.value })} placeholder="Self / Spouse / Child" />
               </div>
               <div className="form-group">
                 <label>Currency</label>

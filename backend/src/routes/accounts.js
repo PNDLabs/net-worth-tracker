@@ -1,6 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
+const DEFAULT_FAMILY_MEMBER = 'Self';
+
+function normalizeFamilyMember(value) {
+  if (typeof value !== 'string') return DEFAULT_FAMILY_MEMBER;
+  const normalized = value.trim();
+  return normalized || DEFAULT_FAMILY_MEMBER;
+}
 
 function getDefaultCurrency(conn) {
   try {
@@ -27,7 +34,15 @@ router.get('/:id', (req, res) => {
 router.post('/', (req, res) => {
   const conn = db.getDb();
   const defaultCurrency = getDefaultCurrency(conn);
-  const { name, institution, type = 'checking', currency = defaultCurrency, balance = 0, notes } = req.body;
+  const {
+    name,
+    institution,
+    type = 'checking',
+    currency = defaultCurrency,
+    balance = 0,
+    family_member = DEFAULT_FAMILY_MEMBER,
+    notes
+  } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   const VALID_TYPES = ['checking', 'savings', 'money_market', 'cd', 'brokerage', '401k', 'ira', 'roth_ira', 'pension', 'other'];
@@ -41,9 +56,17 @@ router.post('/', (req, res) => {
   if (duplicate) return res.status(409).json({ error: 'An account with the same name and institution already exists' });
 
   const result = conn.prepare(
-    `INSERT INTO accounts (name, institution, type, currency, balance, notes)
-     VALUES (?, ?, ?, COALESCE(?, 'USD'), ?, ?)`
-  ).run(name, institution || null, type, currency || null, Number(balance), notes || null);
+    `INSERT INTO accounts (name, institution, type, currency, balance, family_member, notes)
+     VALUES (?, ?, ?, COALESCE(?, 'USD'), ?, ?, ?)`
+  ).run(
+    name,
+    institution || null,
+    type,
+    currency || null,
+    Number(balance),
+    normalizeFamilyMember(family_member),
+    notes || null
+  );
 
   const account = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(result.lastInsertRowid);
   conn.prepare(
@@ -59,22 +82,32 @@ router.put('/:id', (req, res) => {
   const existing = conn.prepare('SELECT * FROM accounts WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Account not found' });
 
-  const { name, institution, type, currency, balance, notes } = req.body;
+  const { name, institution, type, currency, balance, family_member, notes } = req.body;
   const updated = {
     name: name !== undefined ? name : existing.name,
     institution: institution !== undefined ? institution : existing.institution,
     type: type !== undefined ? type : existing.type,
     currency: currency !== undefined ? currency : existing.currency,
     balance: balance !== undefined ? Number(balance) : existing.balance,
+    family_member: family_member !== undefined ? normalizeFamilyMember(family_member) : existing.family_member,
     notes: notes !== undefined ? notes : existing.notes,
   };
 
   if (!updated.name) return res.status(400).json({ error: 'name is required' });
 
   conn.prepare(
-    `UPDATE accounts SET name=?, institution=?, type=?, currency=?, balance=?, notes=?,
+    `UPDATE accounts SET name=?, institution=?, type=?, currency=?, balance=?, family_member=?, notes=?,
      updated_at=datetime('now') WHERE id=?`
-  ).run(updated.name, updated.institution, updated.type, updated.currency, updated.balance, updated.notes, req.params.id);
+  ).run(
+    updated.name,
+    updated.institution,
+    updated.type,
+    updated.currency,
+    updated.balance,
+    updated.family_member,
+    updated.notes,
+    req.params.id
+  );
 
   if (updated.balance !== existing.balance) {
     conn.prepare(

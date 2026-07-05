@@ -5,7 +5,17 @@ import { useCurrency } from '../hooks/CurrencyContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const LIABILITY_TYPES = ['mortgage', 'auto', 'student', 'personal', 'credit_card', 'heloc', 'other'];
-const EMPTY = { name: '', lender: '', type: 'other', original_principal: '', current_balance: '', interest_rate: '', minimum_payment: '', notes: '' };
+const EMPTY = {
+  name: '',
+  lender: '',
+  type: 'other',
+  original_principal: '',
+  current_balance: '',
+  interest_rate: '',
+  minimum_payment: '',
+  family_member: 'Self',
+  notes: ''
+};
 
 export default function LiabilitiesPage() {
   const [items, setItems] = useState([]);
@@ -25,7 +35,14 @@ export default function LiabilitiesPage() {
   function openCreate() { setEditing(null); setForm(EMPTY); setShowModal(true); setError(''); }
   function openEdit(l) {
     setEditing(l);
-    setForm({ ...l, original_principal: l.original_principal ?? '', interest_rate: l.interest_rate ?? '', minimum_payment: l.minimum_payment ?? '', notes: l.notes || '' });
+    setForm({
+      ...l,
+      original_principal: l.original_principal ?? '',
+      interest_rate: l.interest_rate ?? '',
+      minimum_payment: l.minimum_payment ?? '',
+      family_member: l.family_member || 'Self',
+      notes: l.notes || ''
+    });
     setShowModal(true); setError('');
   }
 
@@ -87,7 +104,7 @@ export default function LiabilitiesPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th className="hide-mobile">Lender</th><th>Type</th>
+                  <th>Name</th><th className="hide-mobile">Lender</th><th>Type</th><th className="hide-mobile">Family Member</th>
                   <th className="hide-mobile" style={{ textAlign: 'right' }}>Original</th>
                   <th style={{ textAlign: 'right' }}>Balance</th>
                   <th className="hide-mobile" style={{ textAlign: 'right' }}>Rate</th>
@@ -105,6 +122,7 @@ export default function LiabilitiesPage() {
                         <td><strong>{l.name}</strong>{l.notes && <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{l.notes}</div>}</td>
                         <td className="hide-mobile">{l.lender || '—'}</td>
                         <td><span className={`badge badge-${l.type}`}>{typeLabel(l.type)}</span></td>
+                        <td className="hide-mobile">{l.family_member || 'Self'}</td>
                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.original_principal != null ? fmt(l.original_principal) : '—'}</td>
                         <td style={{ textAlign: 'right' }} className="amount negative">{fmt(l.current_balance)}</td>
                         <td className="hide-mobile" style={{ textAlign: 'right' }}>{l.interest_rate != null ? formatPct(l.interest_rate) : '—'}</td>
@@ -120,7 +138,7 @@ export default function LiabilitiesPage() {
                       </tr>
                       {historyId === l.id && (
                         <tr key={`vh-${l.id}`}>
-                          <td colSpan={9} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
+                          <td colSpan={10} style={{ padding: '12px 24px', background: 'var(--color-surface-2)' }}>
                             {(() => {
                               const d = historyData[l.id];
                               if (!d) return <p style={{ color: 'var(--color-text-muted)' }}>Loading history…</p>;
@@ -188,6 +206,10 @@ export default function LiabilitiesPage() {
                 <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                   {LIABILITY_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
                 </select>
+              </div>
+              <div className="form-group">
+                <label>Family Member</label>
+                <input value={form.family_member} onChange={(e) => setForm({ ...form, family_member: e.target.value })} placeholder="Self / Spouse / Child" />
               </div>
               <div className="form-group">
                 <label>Original Principal{currency ? ` (${currency})` : ''}</label>
