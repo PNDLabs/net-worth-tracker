@@ -10,7 +10,7 @@ A full-stack web application to track your personal net worth across all financi
 - 🏠 **Assets** — real estate, vehicles, crypto, collectibles, business interests
 - 💳 **Liabilities** — mortgage, auto loans, student loans, credit cards, HELOCs
 - 📈 **History** — time-series snapshots with a line chart
-- 📥 **Import** — bulk import via CSV or JSON for bank/investment statements
+- 📥 **Import** — bulk import via PDF, CSV or JSON for bank/investment statements
 
 ## Tech Stack
 
