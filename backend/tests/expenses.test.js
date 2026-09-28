@@ -514,3 +514,169 @@ describe('transactionMatcher', () => {
     expect(get(d)).toMatchObject({ kind: 'cc_payment', matched_txn_id: null });
   });
 });
+
+// ─── API: preview & commit ───────────────────────────────────────────────────
+
+describe('Expenses API – preview & commit', () => {
+  const pdfExtractor = require('../src/utils/pdfExtractor');
+  let accountId;
+  let cardId;
+
+  beforeEach(async () => {
+    accountId = (await request(app).post('/api/accounts').send({ name: 'HDFC Savings', type: 'savings', balance: 0 })).body.id;
+    cardId = (await request(app).post('/api/liabilities').send({ name: 'HDFC Regalia', type: 'credit_card', current_balance: 0 })).body.id;
+  });
+
+  const preview = (file, name, fields) => {
+    let req = request(app).post('/api/expenses/preview');
+    for (const [k, v] of Object.entries(fields)) req = req.field(k, String(v));
+    return req.attach('file', file, name);
+  };
+  const commitFrom = (p, sourceType, sourceId, extra = {}) => request(app).post('/api/expenses/commit').send({
+    source_type: sourceType, source_id: sourceId,
+    statement: { ...p.statement, parse_method: p.method },
+    transactions: p.transactions.filter((t) => !t.duplicate),
+    ...extra,
+  });
+  const count = (table) => testDb.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+  const bankCsv = (extraRows = []) => Buffer.from([fx.BANK_CSV, ...extraRows].join('\n'));
+
+  test('previews a PDF bank statement without saving anything', async () => {
+    const res = await preview(fx.makePdf(fx.BANK_LINES), 'aug.pdf', { source_type: 'account', source_id: accountId });
+    expect(res.status).toBe(200);
+    expect(res.body.method).toBe('pattern');
+    expect(res.body.statement).toMatchObject({ statement_type: 'bank', last4: '4821', closing_balance: 124550, file_name: 'aug.pdf' });
+    expect(res.body.transactions.map((t) => t.kind)).toEqual(['income', 'expense', 'cc_payment', 'investment']);
+    expect(res.body.transactions.every((t) => t.dedupe_key && t.duplicate === false)).toBe(true);
+    expect(res.body.balance_update).toMatchObject({ eligible: true, default_checked: true, entity_type: 'account', proposed: 124550 });
+    expect(res.body.validation_notes).toEqual([]);
+    expect(count('transactions')).toBe(0);
+  });
+
+  test('validates the source and the file type', async () => {
+    expect((await preview(bankCsv(), 'a.csv', { source_type: 'account', source_id: 999 })).status).toBe(404);
+    expect((await preview(bankCsv(), 'a.csv', { source_type: 'bogus', source_id: accountId })).status).toBe(400);
+    const loanId = (await request(app).post('/api/liabilities').send({ name: 'Car Loan', type: 'auto', current_balance: 1 })).body.id;
+    expect((await preview(bankCsv(), 'a.csv', { source_type: 'liability', source_id: loanId })).status).toBe(400);
+    expect((await preview(Buffer.from([1, 2, 3]), 'a.png', { source_type: 'account', source_id: accountId })).status).toBe(422);
+    expect((await request(app).post('/api/expenses/preview').field('source_type', 'account').field('source_id', String(accountId))).status).toBe(400);
+  });
+
+  test('reports password-protected and image-only PDFs', async () => {
+    jest.spyOn(pdfExtractor, 'extractPdfPages').mockRejectedValueOnce(
+      Object.assign(new Error('This PDF is password-protected. Please provide the correct password.'), { code: 'PASSWORD_REQUIRED' }));
+    const locked = await preview(Buffer.from('%PDF-1.4'), 'a.pdf', { source_type: 'account', source_id: accountId });
+    expect(locked.status).toBe(422);
+    expect(locked.body.code).toBe('PASSWORD_REQUIRED');
+
+    jest.spyOn(pdfExtractor, 'extractPdfPages').mockResolvedValueOnce(['  ', '']);
+    const scanned = await preview(Buffer.from('%PDF-1.4'), 'a.pdf', { source_type: 'account', source_id: accountId });
+    expect(scanned.status).toBe(422);
+    expect(scanned.body.error).toMatch(/scanned/);
+  });
+
+  test('commit saves transactions, and a re-upload is all duplicates', async () => {
+    const p = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    const first = await commitFrom(p, 'account', accountId);
+    expect(first.status).toBe(201);
+    expect(first.body).toMatchObject({ inserted: 4, duplicates: 0, balance_updated: false });
+    expect(first.body.statement_id).toEqual(expect.any(Number));
+
+    const again = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    expect(again.transactions.every((t) => t.duplicate)).toBe(true);
+    const second = await request(app).post('/api/expenses/commit').send({
+      source_type: 'account', source_id: accountId, statement: again.statement, transactions: again.transactions,
+    });
+    expect(second.body).toMatchObject({ inserted: 0, duplicates: 4, statement_id: null });
+    expect(count('transactions')).toBe(4);
+    expect(count('expense_statements')).toBe(1);
+  });
+
+  test('overlapping statements only add the new rows', async () => {
+    await commitFrom((await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body, 'account', accountId);
+    const overlap = [
+      ...fx.BANK_CSV_HEADER, ...fx.BANK_CSV_ROWS.slice(2),
+      '15/08/26,AMAZON PAY,0005,15/08/26,"1,000.00",,"1,23,550.00"',
+    ].join('\n');
+    const p = (await preview(Buffer.from(overlap), 'mid.csv', { source_type: 'account', source_id: accountId })).body;
+    expect(p.transactions.map((t) => t.duplicate)).toEqual([true, true, false]);
+    const res = await request(app).post('/api/expenses/commit').send({
+      source_type: 'account', source_id: accountId, statement: p.statement, transactions: p.transactions,
+    });
+    expect(res.body).toMatchObject({ inserted: 1, duplicates: 2 });
+    expect(count('transactions')).toBe(5);
+  });
+
+  test('edited rows teach merchant rules that apply to the next statement', async () => {
+    const p = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    const edited = p.transactions.map((t) => (t.description.includes('SWIGGY') ? { ...t, category: 'Groceries', edited: true } : t));
+    const res = await commitFrom({ ...p, transactions: edited }, 'account', accountId);
+    expect(res.body.rules_learned).toBe(1);
+    expect(testDb.prepare('SELECT kind_locked FROM transactions WHERE description LIKE ?').get('%SWIGGY%').kind_locked).toBe(1);
+
+    const next = (await preview(bankCsv(['20/08/26,UPI/999999999999/SWIGGY/swiggy@icici/Payment,0006,20/08/26,300.00,,"1,24,250.00"']),
+      'aug2.csv', { source_type: 'account', source_id: accountId })).body;
+    const swiggy = next.transactions.find((t) => t.date === '2026-08-20');
+    expect(swiggy).toMatchObject({ category: 'Groceries', needs_review: false, duplicate: false });
+  });
+
+  test('card statement then bank statement: the card payment is paired, not double counted', async () => {
+    const card = (await preview(fx.makePdf(fx.CARD_LINES), 'card.pdf', { source_type: 'liability', source_id: cardId })).body;
+    expect(card.statement).toMatchObject({ statement_type: 'credit_card', last4: '1234', closing_balance: 12300 });
+    expect(card.transactions.map((t) => t.kind)).toEqual(['expense', 'expense', 'cc_payment', 'refund', 'expense']);
+    expect((await commitFrom(card, 'liability', cardId)).status).toBe(201);
+
+    const bank = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    const res = await commitFrom(bank, 'account', accountId);
+    expect(res.body.matches).toEqual({ card_payments: 1, promoted: 0, transfers: 0 });
+    const payments = testDb.prepare("SELECT matched_txn_id FROM transactions WHERE kind = 'cc_payment'").all();
+    expect(payments).toHaveLength(2);
+    expect(payments.every((r) => r.matched_txn_id)).toBe(true);
+  });
+
+  test('balance update writes the closing balance and value history', async () => {
+    const p = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    const res = await commitFrom(p, 'account', accountId, { update_balance: true });
+    expect(res.body.balance_updated).toBe(true);
+    expect(testDb.prepare('SELECT balance FROM accounts WHERE id = ?').get(accountId).balance).toBe(124550);
+    expect(testDb.prepare(
+      "SELECT value, recorded_at FROM value_history WHERE entity_type = 'account' AND entity_id = ? AND notes = 'expense statement import'"
+    ).get(accountId)).toEqual({ value: 124550, recorded_at: '2026-08-10' });
+  });
+
+  test('refuses to overwrite a newer balance unless forced', async () => {
+    testDb.prepare('UPDATE accounts SET balance = 99999 WHERE id = ?').run(accountId);
+    testDb.prepare("INSERT INTO value_history (entity_type, entity_id, value, recorded_at) VALUES ('account', ?, 99999, '2026-09-01')").run(accountId);
+    const p = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
+    expect(p.balance_update.default_checked).toBe(false);
+
+    const refused = await commitFrom(p, 'account', accountId, { update_balance: true });
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('STALE_BALANCE');
+    expect(count('transactions')).toBe(0);
+
+    const forced = await commitFrom(p, 'account', accountId, { update_balance: true, force_balance: true });
+    expect(forced.status).toBe(201);
+    expect(testDb.prepare('SELECT balance FROM accounts WHERE id = ?').get(accountId).balance).toBe(124550);
+  });
+
+  test('rejects invalid commits', async () => {
+    const send = (body) => request(app).post('/api/expenses/commit').send({ source_type: 'account', source_id: accountId, statement: {}, ...body });
+    expect((await send({ transactions: [] })).status).toBe(400);
+    expect((await send({ transactions: [{ date: 'bad', description: 'X', amount: 1, direction: 'debit', kind: 'expense' }] })).status).toBe(400);
+    expect((await send({ transactions: [{ date: '2026-08-01', description: 'X', amount: -5, direction: 'debit', kind: 'expense' }] })).status).toBe(400);
+    expect((await send({ transactions: [{ date: '2026-08-01', description: 'X', amount: 5, direction: 'debit', kind: 'shopping' }] })).status).toBe(400);
+    expect((await send({ update_balance: true, transactions: [{ date: '2026-08-01', description: 'X', amount: 5, direction: 'debit', kind: 'expense' }] })).status).toBe(400);
+  });
+
+  test('accepts a commit larger than the global 100 KB JSON limit', async () => {
+    const transactions = Array.from({ length: 600 }, (_, i) => ({
+      date: '2026-08-01', description: `UPI/${i}/SHOP ${'X'.repeat(150)}/shop@ybl/payment`,
+      amount: 10 + i, direction: 'debit', kind: 'expense', category: 'Other',
+    }));
+    expect(JSON.stringify(transactions).length).toBeGreaterThan(100 * 1024);
+    const res = await request(app).post('/api/expenses/commit').send({ source_type: 'account', source_id: accountId, statement: {}, transactions });
+    expect(res.status).toBe(201);
+    expect(res.body.inserted).toBe(600);
+  });
+});

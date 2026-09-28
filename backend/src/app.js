@@ -12,6 +12,7 @@ const insuranceRouter = require('./routes/insurance');
 const settingsRouter = require('./routes/settings');
 const valueHistoryRouter = require('./routes/valueHistory');
 const metalsRouter = require('./routes/metals');
+const expensesRouter = require('./routes/expenses');
 const db = require('./db/database');
 
 function createApp() {
@@ -44,6 +45,10 @@ function createApp() {
   app.set('trust proxy', 1);
 
   app.use(cors());
+  // Expense commits carry a whole statement of transactions, which can exceed the
+  // global 100 KB JSON limit. Their parser must run first: the global parser skips
+  // bodies that have already been parsed.
+  app.use('/api/expenses/commit', express.json({ limit: '5mb' }));
   app.use(express.json());
 
   app.use('/api/accounts', apiLimiter, accountsRouter);
@@ -56,6 +61,9 @@ function createApp() {
   app.use('/api/metals', apiLimiter, metalsRouter);
   app.use('/api/import', importLimiter, importRouter);
   app.use('/api/export', apiLimiter, exportRouter);
+  app.use('/api/expenses/preview', importLimiter);
+  app.use('/api/expenses/commit', importLimiter);
+  app.use('/api/expenses', apiLimiter, expensesRouter);
 
   // Health check
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
