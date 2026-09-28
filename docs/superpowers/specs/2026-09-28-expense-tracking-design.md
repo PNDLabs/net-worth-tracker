@@ -84,6 +84,7 @@ a missing source are shown as "Unlinked source" and remain deletable.
 | category | TEXT | spending bucket; null for non-expense kinds is allowed |
 | matched_txn_id | INTEGER | FK → `transactions(id)` ON DELETE SET NULL |
 | needs_review | INTEGER NOT NULL DEFAULT 0 | |
+| kind_locked | INTEGER NOT NULL DEFAULT 0 | 1 once the user set the kind manually; the matcher never changes a locked row |
 | dedupe_key | TEXT NOT NULL UNIQUE | see §3.4 |
 | created_at, updated_at | TEXT | |
 
@@ -127,9 +128,11 @@ connection).
 
 ### 3.1 Extraction
 
-- **PDF:** add `extractPdfPages(buffer, password)` to `pdfExtractor.js` returning `string[]`
-  (one per page). `extractPdfText` is refactored to `extractPdfPages(...).join('\n')` — behaviour
-  unchanged. `PASSWORD_REQUIRED` handling is identical.
+- **PDF:** add `extractPdfPages(buffer, password, { preserveLines })` to `pdfExtractor.js` returning
+  `string[]` (one per page). With `preserveLines: true` text items are joined with `\n` where pdf.js
+  reports an end-of-line (`item.hasEOL`), otherwise with a space. `extractPdfText` becomes
+  `extractPdfPages(buffer, password).join('\n')` — behaviour unchanged. `PASSWORD_REQUIRED` handling
+  is identical. The expense module uses `preserveLines: true`.
 - **CSV:** parsed with `csv-parse` as today. Columns are mapped by an AI column mapper call
   (a transactions variant of `mapCsvColumnsWithAI`) to target fields
   `date, description, debit, credit, amount, dr_cr, balance`. Without AI, a fallback alias map:
@@ -181,8 +184,10 @@ fallback is the keyword classifier.
 
 - **Line parser:** detects rows starting with a date (`DD/MM/YYYY`, `DD-MM-YY`, `DD MMM YYYY`,
   `DD-MMM-YYYY`), captures description and one or two amounts, then direction from a `Dr`/`Cr`
-  token, or from the running-balance delta when a balance column is present. Reuses
-  `normalizeDate` from `statementParser.js` (exported for this purpose).
+  token, or from the running-balance delta when a balance column is present. Dates are parsed by
+  a new `parseTxnDate` that reads numeric dates **day-first** (`05/08/2026` = 5 Aug), as Indian
+  statements do. The existing `normalizeDate` is not reused because it reads numeric dates
+  month-first (US).
 - **Header detection:** statement type (credit card if text contains "credit card",
   "minimum amount due", "total amount due"), last4 (`XX1234`, `**** 1234`, `ending 1234`),
   period and opening/closing balance via regex.
@@ -240,7 +245,8 @@ user reviewed (no re-parse). In a single `conn.transaction`:
 Response: counts of inserted / duplicates skipped / rules learned / matches made / balance updated.
 
 **Balance-update default:** the checkbox is pre-ticked only when `closing_balance` is present and
-`period_end` is later than the latest `value_history.recorded_at` for that entity (or none exists).
+either the current balance is 0 (a freshly created source), no `value_history` exists for the
+entity, or `period_end` is later than the latest `value_history.recorded_at`.
 The server re-checks this and refuses (`409`) to apply an older statement's balance unless
 `force_balance: true` is sent.
 
@@ -269,7 +275,9 @@ the card statement is never uploaded, is stored as `expense`. It will usually su
 ## 5. API — `backend/src/routes/expenses.js`
 
 Mounted at `/api/expenses` in `app.js`. `/preview` and `/commit` use `importLimiter`;
-everything else uses `apiLimiter`.
+everything else uses `apiLimiter`. `/commit` bodies can exceed the global `express.json()` 100 KB
+limit, so `express.json({ limit: '5mb' })` for `/api/expenses/commit` is registered **before** the
+global parser in `app.js`.
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -278,7 +286,7 @@ everything else uses `apiLimiter`.
 | GET | `/summary?month=YYYY-MM&member=` | income, spending, refunds, invested, savings_rate, investment_rate, net_worth_change, by_category[], excluded { total, matched_count, unmatched_count }, needs_review_count |
 | GET | `/trend?months=12&member=` | per-month income / spending / invested / savings_rate |
 | GET | `/transactions?month=&kind=&category=&member=&needs_review=` | list, joined with source name and family member |
-| PUT | `/transactions/:id` | `{ kind?, category?, remember? }`; clears `needs_review`; upserts rule when `remember` |
+| PUT | `/transactions/:id` | `{ kind?, category?, remember? }`; clears `needs_review`; a supplied `kind` sets `kind_locked = 1`; changing a paired row to a non-excluded kind unpairs both rows and flags the partner `needs_review`; upserts rule when `remember` |
 | GET | `/statements` | uploads with source name, period, transaction count |
 | DELETE | `/statements/:id` | removes statement and its transactions; partners are unpaired (`matched_txn_id` → NULL via FK) and flagged `needs_review = 1`; their `kind` is unchanged |
 | GET | `/rules` · DELETE `/rules/:id` | view / remove learned rules |
@@ -299,6 +307,11 @@ shared helper):
 - `investment_rate = invested / income`, `null` when income = 0
 - `net_worth_change = nw(latest snapshot ≤ end of M) − nw(latest snapshot < start of M)`;
   `null` if either is missing. Only computed for "All members" (snapshots are household-level).
+- `by_category` sums `expense` rows only; refunds are reported as one `refunds` total.
+- `excluded.total` = Σ amount of **debit** rows whose kind is `cc_payment` or `transfer` (money that
+  left an account without counting as spending); `matched_count` / `unmatched_count` count those
+  rows with / without `matched_txn_id`. Card-side payment credits are not added, so a matched pair
+  is not counted twice.
 
 ---
 
@@ -323,7 +336,10 @@ shared helper):
 
 ### Overview tab
 Month picker, member filter, KPI row (Income, Spending, Invested, Savings rate, Net worth change),
-spending-by-category horizontal bar chart, 12-month trend (grouped bars + savings-rate line),
+spending-by-category horizontal bar chart (single hue, direct value labels), 12-month trend as two
+stacked charts sharing the month axis — grouped bars for income / spending / invested (validated
+categorical slots 1–3: `#2a78d6`, `#eb6834`, `#1baf7a`) and a separate savings-rate line chart (no
+dual y-axis) — with a "Show as table" toggle (required because `#1baf7a` is below 3:1 contrast),
 excluded-amount note, needs-review badge linking to the Transactions tab filtered.
 
 ### Transactions tab
@@ -378,11 +394,12 @@ New file `backend/tests/expenses.test.js`, same harness as `api.test.js` (in-mem
 
 **New:** `backend/src/routes/expenses.js`, `backend/src/utils/transactionParser.js`,
 `backend/src/utils/transactionClassifier.js`, `backend/src/utils/transactionMatcher.js`,
+`backend/src/utils/familyMember.js`,
 `backend/tests/expenses.test.js`, `frontend/src/pages/ExpensesPage.jsx`,
 `frontend/src/components/expenses/*.jsx`.
 
 **Modified:** `backend/src/app.js`, `backend/src/db/database.js`, `backend/src/utils/pdfExtractor.js`,
-`backend/src/utils/statementParser.js` (export `normalizeDate`), `backend/src/routes/networth.js`
-(share `normalizedMemberName`), `backend/src/routes/exportRoutes.js`, `frontend/src/App.jsx`,
+`backend/src/routes/networth.js` (use shared `normalizeFamilyMember` from new
+`backend/src/utils/familyMember.js`), `backend/src/routes/exportRoutes.js`, `frontend/src/App.jsx`,
 `frontend/src/hooks/api.js`, `frontend/src/hooks/localApi.js`, `frontend/src/version.js`,
 both `package.json`, `CHANGELOG.md`, `README.md`.
