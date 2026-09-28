@@ -73,14 +73,17 @@ function runMatcher(conn, { from, to }) {
   const canBeTransfer = (r) => r.kind === 'transfer' || !r.kind_locked;
   for (const debit of bankDebits) {
     if (used.has(debit.id) || debit.kind === 'cc_payment' || !canBeTransfer(debit)) continue;
-    const credit = bankCredits.find((c) => !used.has(c.id) && canBeTransfer(c) &&
-      !(c.source_type === debit.source_type && c.source_id === debit.source_id) &&
-      amountEq(c.amount, debit.amount) && dayDiff(c.txn_date, debit.txn_date) <= TRANSFER_DAYS &&
-      (debit.kind === 'transfer' || c.kind === 'transfer' ||
-       mentionsLast4(debit.description, c.statement_last4) || mentionsLast4(c.description, debit.statement_last4)));
+    const credit = bankCredits
+      .filter((c) => !used.has(c.id) && canBeTransfer(c) &&
+        !(c.source_type === debit.source_type && c.source_id === debit.source_id) &&
+        amountEq(c.amount, debit.amount) && dayDiff(c.txn_date, debit.txn_date) <= TRANSFER_DAYS &&
+        (debit.kind === 'transfer' || c.kind === 'transfer' ||
+         mentionsLast4(debit.description, c.statement_last4) || mentionsLast4(c.description, debit.statement_last4)))
+      .sort((a, b) => dayDiff(a.txn_date, debit.txn_date) - dayDiff(b.txn_date, debit.txn_date))[0];
     if (!credit) continue;
-    if (debit.kind !== 'transfer') setKind.run('transfer', 0, debit.id);
-    if (credit.kind !== 'transfer') setKind.run('transfer', 0, credit.id);
+    // A row re-kinded here drops out of the totals (it may have been salary), so flag it.
+    if (debit.kind !== 'transfer') setKind.run('transfer', 1, debit.id);
+    if (credit.kind !== 'transfer') setKind.run('transfer', 1, credit.id);
     link(debit, credit);
     result.transfers++;
   }
