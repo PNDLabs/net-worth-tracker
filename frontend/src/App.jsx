@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import Dashboard from './pages/Dashboard';
 import AccountsPage from './pages/AccountsPage';
 import AssetsPage from './pages/AssetsPage';
@@ -8,6 +9,7 @@ import HistoryPage from './pages/HistoryPage';
 import ImportPage from './pages/ImportPage';
 import MetalsPage from './pages/MetalsPage';
 import SettingsPage from './pages/SettingsPage';
+import ExpensesPage from './pages/ExpensesPage';
 import { CurrencyProvider, useCurrency } from './hooks/CurrencyContext';
 import { APP_VERSION } from './version';
 
@@ -17,11 +19,17 @@ const NAV_ITEMS = [
   { id: 'assets',       label: 'Assets',       icon: '🏠' },
   { id: 'metals',       label: 'Metals',       icon: '🥇' },
   { id: 'liabilities',  label: 'Liabilities',  icon: '💳' },
+  { id: 'expenses',     label: 'Expenses',     icon: '💸' },
   { id: 'insurance',    label: 'Insurance',    icon: '🛡️' },
   { id: 'history',      label: 'History',      icon: '📈' },
   { id: 'import',       label: 'Import',       icon: '📥' },
   { id: 'settings',     label: 'Settings',     icon: '⚙️' },
 ];
+
+// Expenses needs the REST backend's statement parser, so the Android app hides it.
+const VISIBLE_NAV_ITEMS = Capacitor.isNativePlatform()
+  ? NAV_ITEMS.filter((item) => item.id !== 'expenses')
+  : NAV_ITEMS;
 
 // Primary tabs shown in the mobile bottom nav bar
 const BOTTOM_NAV_ITEMS = [
@@ -37,6 +45,7 @@ const PAGES = {
   assets:      AssetsPage,
   metals:      MetalsPage,
   liabilities: LiabilitiesPage,
+  expenses:    ExpensesPage,
   insurance:   InsurancePage,
   history:     HistoryPage,
   import:      ImportPage,
@@ -117,7 +126,7 @@ function AppInner() {
           <p>Personal Finance Tracker</p>
         </div>
         <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item) => (
+          {VISIBLE_NAV_ITEMS.map((item) => (
             <button
               key={item.id}
               className={`nav-item${page === item.id ? ' active' : ''}`}
