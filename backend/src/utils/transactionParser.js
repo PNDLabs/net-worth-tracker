@@ -38,7 +38,8 @@ function isoDate(y, mo, d) {
 /** Parse a statement date. Numeric dates are day-first (Indian convention): 05/08/2026 = 5 Aug. */
 function parseTxnDate(value) {
   if (value == null) return null;
-  const s = String(value).trim();
+  // Exports often append a time ("05/08/2026 10:22:11", "05-Aug-2026 10:22 AM").
+  const s = String(value).trim().replace(/[\sT]+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?$/i, '');
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return isoDate(Number(m[1]), Number(m[2]), Number(m[3]));
   m = s.match(/^(\d{1,2})[-\s/.]([A-Za-z]{3})[A-Za-z]*[-\s/.,]+(\d{2,4})$/);
@@ -461,7 +462,8 @@ async function mapTransactionCsvColumnsWithAI(headers, sampleRows, ai) {
   return fields;
 }
 
-function csvRowToTxn(row, fields) {
+/** @param {boolean} signedCredits – the amount column uses signs, so an unsigned amount is a credit */
+function csvRowToTxn(row, fields, signedCredits = false) {
   const get = (f) => (fields[f] != null ? row[fields[f]] : undefined);
   const date = parseTxnDate(get('date'));
   const description = String(get('description') ?? '').replace(/\s+/g, ' ').trim();
@@ -478,6 +480,7 @@ function csvRowToTxn(row, fields) {
   let direction = null;
   if (/^(cr|credit|c)$/.test(flag) || /cr$/i.test(raw)) direction = 'credit';
   else if (/^(dr|debit|d)$/.test(flag) || /dr$/i.test(raw) || raw.startsWith('-')) direction = 'debit';
+  else if (signedCredits) direction = 'credit';
   return { date, description, amount, direction, balance };
 }
 
@@ -528,7 +531,15 @@ async function parseTransactionsFromCsv(buffer, options = {}) {
     }
   }
   if (!fields) fields = mapByAliases(headers);
-  const parsed = records.map((r) => csvRowToTxn(r, fields)).filter(Boolean);
+  // A bank amount column holding negative values is signed: negative = debit, positive = credit.
+  const signedCredits = statementType === 'bank' && !!fields.amount && !fields.dr_cr &&
+    records.some((r) => String(r[fields.amount] ?? '').trim().startsWith('-'));
+  const parsed = records.map((r) => csvRowToTxn(r, fields, signedCredits)).filter(Boolean);
+  const skipped = records.length - parsed.length;
+  if (skipped > 0) {
+    validation_notes.push(`${skipped} ${skipped === 1 ? 'row' : 'rows'} could not be read (missing date, description or amount) ` +
+      `and ${skipped === 1 ? 'was' : 'were'} skipped. Check them against the statement.`);
+  }
 
   let classified = null;
   if (ai && parsed.length) {

@@ -883,3 +883,147 @@ describe('Export / import of expense data', () => {
     expect(testDb.prepare('SELECT COUNT(*) AS n FROM transactions').get().n).toBe(3);
   });
 });
+
+// ─── Final review fixes ──────────────────────────────────────────────────────
+
+describe('Final review fixes', () => {
+  const clf = require('../src/utils/transactionClassifier');
+  const tp = require('../src/utils/transactionParser');
+  const { runMatcher } = require('../src/utils/transactionMatcher');
+  const count = (table) => testDb.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+
+  // #1 Merchant rules and totals must respect direction.
+  test('a learned expense rule does not turn a refund from the same merchant into spending', () => {
+    const desc = 'AMAZON PAY INDIA PVT LTD BANGALORE';
+    const rules = new Map([[clf.merchantKey(desc), { kind: 'expense', category: 'Groceries' }]]);
+    const [buy, back] = clf.applyPostProcessing([
+      { date: '2026-08-05', description: desc, amount: 3000, direction: 'debit', kind: 'expense', category: 'Shopping', confidence: 0.9 },
+      { date: '2026-08-09', description: desc, amount: 3000, direction: 'credit', kind: 'refund', category: 'Shopping', confidence: 0.9 },
+    ], { statementType: 'credit_card', rules });
+    expect(buy).toMatchObject({ kind: 'expense', category: 'Groceries', needs_review: false });
+    expect(back.kind).toBe('refund');
+  });
+
+  test('an income rule learned from a credit does not turn a payment out into income', () => {
+    const desc = 'UPI/123/RAMESH KUMAR/ramesh@okaxis/aug';
+    const rules = new Map([[clf.merchantKey(desc), { kind: 'income', category: null }]]);
+    const [t] = clf.applyPostProcessing([
+      { date: '2026-08-05', description: desc, amount: 4000, direction: 'debit', kind: 'expense', category: 'Other', confidence: 0.4 },
+    ], { statementType: 'bank', rules });
+    expect(t).toMatchObject({ kind: 'expense', needs_review: true });
+  });
+
+  test('summary nets rows whose direction runs against their kind', async () => {
+    const acct = Number(testDb.prepare("INSERT INTO accounts (name, type, balance) VALUES ('A', 'savings', 0)").run().lastInsertRowid);
+    const s = insertStatement(testDb, { source_type: 'account', source_id: acct });
+    insertTxn(testDb, s, { date: '2026-08-02', amount: 3000, direction: 'debit', kind: 'expense', category: 'Groceries' });
+    insertTxn(testDb, s, { date: '2026-08-03', amount: 3000, direction: 'credit', kind: 'expense', category: 'Groceries' });
+    insertTxn(testDb, s, { date: '2026-08-04', amount: 10000, direction: 'credit', kind: 'income' });
+    insertTxn(testDb, s, { date: '2026-08-05', amount: 4000, direction: 'debit', kind: 'income' });
+    const res = await request(app).get('/api/expenses/summary?month=2026-08');
+    expect(res.body).toMatchObject({ income: 6000, spending: 0 });
+    expect(res.body.by_category).toEqual([]);
+  });
+
+  // #2 Negative balances keep their sign.
+  test('overdrawn running balances keep their sign when inferring direction', () => {
+    const text = [
+      'Opening Balance : 1,000.00',
+      '01/08/2026 SALARY ACME 500.00 1,500.00',
+      '03/08/2026 RENT PAYMENT 2,000.00 500.00 Dr',
+      '05/08/2026 UPI/ZOMATO 300.00 800.00 Dr',
+    ].join('\n');
+    const h = tp.detectStatementHeader(text, 'bank');
+    expect(tp.parsePageWithPattern(text, 'bank', { prevBalance: h.opening_balance }).map((t) => t.direction))
+      .toEqual(['credit', 'debit', 'debit']);
+  });
+
+  test('header balances keep Dr/Cr signs', () => {
+    expect(tp.detectStatementHeader('Opening Balance : 1,000.00\nClosing Balance : 800.00 Dr', 'bank'))
+      .toMatchObject({ opening_balance: 1000, closing_balance: -800 });
+    expect(tp.detectStatementHeader('Previous Balance 200.00\nTotal Amount Due 1,500.00 Cr', 'credit_card'))
+      .toMatchObject({ opening_balance: 200, closing_balance: -1500 });
+  });
+
+  test('negative CSV balances keep their sign', async () => {
+    const csv = 'Date,Narration,Withdrawal Amt.,Deposit Amt.,Closing Balance\n01/08/2026,RENT,1500.00,,-500.00\n03/08/2026,ZOMATO,300.00,,-800.00';
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(csv), { statementType: 'bank' });
+    expect(r.statement).toMatchObject({ opening_balance: 1000, closing_balance: -800 });
+  });
+
+  test('a card in credit is written as nothing owed, not as a debt', async () => {
+    const card = (await request(app).post('/api/liabilities').send({ name: 'Card', type: 'credit_card', current_balance: 0 })).body.id;
+    const res = await request(app).post('/api/expenses/commit').send({
+      source_type: 'liability', source_id: card, update_balance: true,
+      statement: { closing_balance: -1500, period_end: '2026-08-31' },
+      transactions: [{ date: '2026-08-06', description: 'PAYMENT RECEIVED', amount: 5000, direction: 'credit', kind: 'cc_payment' }],
+    });
+    expect(res.status).toBe(201);
+    expect(testDb.prepare('SELECT current_balance FROM liabilities WHERE id = ?').get(card).current_balance).toBe(0);
+  });
+
+  // #3 Committing only the new rows of a preview must not shift dedupe keys.
+  test('committing only the new rows of a preview keeps a second identical transaction', async () => {
+    const acct = (await request(app).post('/api/accounts').send({ name: 'S', type: 'savings', balance: 0 })).body.id;
+    const one = 'Date,Narration,Withdrawal Amt.,Deposit Amt.\n05/08/2026,STARBUCKS,300.00,';
+    const preview = async (csv) => (await request(app).post('/api/expenses/preview')
+      .field('source_type', 'account').field('source_id', String(acct)).attach('file', Buffer.from(csv), 's.csv')).body;
+    const commit = (p) => request(app).post('/api/expenses/commit').send({
+      source_type: 'account', source_id: acct, statement: p.statement, transactions: p.transactions.filter((t) => !t.duplicate),
+    });
+    await commit(await preview(one));
+    const p2 = await preview(`${one}\n05/08/2026,STARBUCKS,300.00,`);
+    expect(p2.transactions.map((t) => t.duplicate)).toEqual([true, false]);
+    expect((await commit(p2)).body.inserted).toBe(1);
+    expect(count('transactions')).toBe(2);
+  });
+
+  // #4 Rows the transfer matcher re-kinds are flagged; closest date wins.
+  test('a row the transfer matcher re-kinds is flagged for review', () => {
+    const a = insertStatement(testDb, { source_type: 'account', source_id: 1, statement_type: 'bank' });
+    const b = insertStatement(testDb, { source_type: 'account', source_id: 2, statement_type: 'bank' });
+    insertTxn(testDb, a, { date: '2026-08-01', description: 'IMPS TO PRIYA SHARMA', amount: 50000, direction: 'debit', kind: 'transfer' });
+    const salary = insertTxn(testDb, b, { date: '2026-08-02', description: 'NEFT ACME CORP SALARY', amount: 50000, direction: 'credit', kind: 'income' });
+    runMatcher(testDb, { from: '2026-07-01', to: '2026-09-30' });
+    expect(testDb.prepare('SELECT kind, needs_review FROM transactions WHERE id = ?').get(salary)).toEqual({ kind: 'transfer', needs_review: 1 });
+  });
+
+  test('transfer pairing prefers the closest date', () => {
+    const a = insertStatement(testDb, { source_type: 'account', source_id: 1, statement_type: 'bank' });
+    const b = insertStatement(testDb, { source_type: 'account', source_id: 2, statement_type: 'bank' });
+    const d = insertTxn(testDb, a, { date: '2026-08-10', description: 'TRANSFER', amount: 3000, direction: 'debit', kind: 'transfer' });
+    insertTxn(testDb, b, { date: '2026-08-07', description: 'IMPS FROM', amount: 3000, direction: 'credit', kind: 'income' });
+    const near = insertTxn(testDb, b, { date: '2026-08-10', description: 'IMPS FROM', amount: 3000, direction: 'credit', kind: 'income' });
+    runMatcher(testDb, { from: '2026-07-01', to: '2026-09-30' });
+    expect(testDb.prepare('SELECT matched_txn_id FROM transactions WHERE id = ?').get(d).matched_txn_id).toBe(near);
+  });
+
+  // #5 Card rows: the last amount is the billed amount; no bank-style balance inference.
+  test('card rows with two amounts use the last as the billed amount and are flagged', () => {
+    const text = 'Previous Balance 500.00\n05/08/2026 AWS SERVICES USD 12.99 1,100.50\n06/08/2026 SWIGGY 200.00';
+    const txns = tp.parsePageWithPattern(text, 'credit_card', { prevBalance: 500 });
+    expect(txns[0]).toMatchObject({ amount: 1100.5, direction: 'debit' });
+    expect(txns[0].confidence).toBeLessThan(0.7);
+    expect(txns[1]).toMatchObject({ amount: 200, direction: 'debit' });
+  });
+
+  // #6 CSV shapes.
+  test('signed single-amount bank CSVs: positive rows are credits when the column has negatives', async () => {
+    const csv = 'Date,Description,Amount\n01/08/2026,NEFT ACME CORP SALARY,50000.00\n03/08/2026,SWIGGY,-450.00';
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(csv), { statementType: 'bank' });
+    expect(r.transactions.map((t) => t.direction)).toEqual(['credit', 'debit']);
+    expect(r.transactions[0].confidence).toBeGreaterThan(0.4);
+  });
+
+  test('dates with a time part are accepted', () => {
+    expect(tp.parseTxnDate('05/08/2026 10:22:11')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('05-Aug-2026 10:22')).toBe('2026-08-05');
+  });
+
+  test('CSV rows that cannot be read are reported, not silently dropped', async () => {
+    const csv = 'Date,Description,Amount\n01/08/2026,A,10.00\n,B,20.00\nbad,C,30.00';
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(csv), { statementType: 'bank' });
+    expect(r.transactions).toHaveLength(1);
+    expect(r.validation_notes).toEqual([expect.stringMatching(/^2 rows could not be read/)]);
+  });
+});
