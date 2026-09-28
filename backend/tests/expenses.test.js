@@ -346,3 +346,70 @@ describe('transactionParser – AI passes', () => {
     expect(r.statement).toMatchObject({ last4: '4821', opening_balance: 50000, closing_balance: 124550 });
   });
 });
+
+// ─── CSV parsing ─────────────────────────────────────────────────────────────
+
+describe('transactionParser – CSV', () => {
+  const tp = require('../src/utils/transactionParser');
+  const rowsOf = (r) => r.transactions.map((t) => [t.date, t.direction, t.amount]);
+
+  test('maps bank CSV columns by alias and skips preamble rows', async () => {
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(fx.BANK_CSV), { statementType: 'bank' });
+    expect(r.method).toBe('pattern');
+    expect(rowsOf(r)).toEqual([
+      ['2026-08-01', 'credit', 100000], ['2026-08-03', 'debit', 450],
+      ['2026-08-05', 'debit', 20000], ['2026-08-10', 'debit', 5000],
+    ]);
+    expect(r.statement).toMatchObject({ period_start: '2026-08-01', period_end: '2026-08-10', opening_balance: 50000, closing_balance: 124550 });
+  });
+
+  test('newest-first CSV still gets the right opening and closing balance', async () => {
+    const csv = [...fx.BANK_CSV_HEADER, ...[...fx.BANK_CSV_ROWS].reverse()].join('\n');
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(csv), { statementType: 'bank' });
+    expect(r.statement).toMatchObject({ opening_balance: 50000, closing_balance: 124550 });
+  });
+
+  test('single amount column with a Debit/Credit column', async () => {
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(fx.CARD_CSV), { statementType: 'credit_card' });
+    expect(rowsOf(r)).toEqual([['2026-08-02', 'debit', 800], ['2026-08-06', 'credit', 20000]]);
+    expect(r.statement.closing_balance).toBeNull();
+  });
+
+  test('rows with no direction marker become low-confidence debits', async () => {
+    const r = await tp.parseTransactionsFromCsv(Buffer.from('Date,Description,Amount\n01/08/2026,SOMETHING,100.00'), { statementType: 'bank' });
+    expect(r.transactions[0]).toMatchObject({ direction: 'debit', amount: 100 });
+    expect(r.transactions[0].confidence).toBeLessThanOrEqual(0.4);
+  });
+
+  test('rejects a CSV with no recognisable header', async () => {
+    await expect(tp.parseTransactionsFromCsv(Buffer.from('a,b\n1,2'), { statementType: 'bank' }))
+      .rejects.toMatchObject({ status: 422 });
+  });
+
+  test('uses AI column mapping and classification when a key is set', async () => {
+    const calls = fx.mockAi((sys, user) => {
+      if (sys === tp.PROMPTS.csvMap) {
+        return { column_mapping: { Date: 'date', Narration: 'description', 'Withdrawal Amt.': 'debit', 'Deposit Amt.': 'credit', 'Closing Balance': 'balance', 'Value Dt': null, 'Chq./Ref.No.': null } };
+      }
+      if (sys === tp.PROMPTS.classify('bank')) {
+        return { results: JSON.parse(user).map((t) => ({ i: t.i, merchant: 'M', kind: t.direction === 'credit' ? 'income' : 'expense', category: t.direction === 'credit' ? null : 'Shopping', confidence: 0.9 })) };
+      }
+      return new Error('unexpected prompt');
+    });
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(fx.BANK_CSV), { statementType: 'bank', apiKey: 'k' });
+    expect(calls.map((c) => c.sys)).toEqual([tp.PROMPTS.csvMap, tp.PROMPTS.classify('bank')]);
+    expect(r.method).toBe('ai');
+    expect(r.transactions[1]).toMatchObject({ merchant: 'M', kind: 'expense', category: 'Shopping' });
+  });
+
+  test('falls back to aliases and keywords when AI fails', async () => {
+    fx.mockAi((sys) => (sys === tp.PROMPTS.csvMap ? { column_mapping: {} } : new Error('boom')));
+    const r = await tp.parseTransactionsFromCsv(Buffer.from(fx.BANK_CSV), { statementType: 'bank', apiKey: 'k' });
+    expect(r.method).toBe('pattern');
+    expect(r.transactions).toHaveLength(4);
+    expect(r.validation_notes).toEqual([
+      expect.stringMatching(/^AI column mapping failed/),
+      expect.stringMatching(/^AI classification failed/),
+    ]);
+  });
+});

@@ -15,7 +15,8 @@
  *   AI_API_KEY (or OPENAI_API_KEY), AI_API_URL (default https://api.openai.com/v1),
  *   AI_MODEL (default gpt-4o-mini)
  */
-const { DEFAULT_CATEGORIES, keywordClassify } = require('./transactionClassifier');
+const { parse } = require('csv-parse/sync');
+const { KINDS, DEFAULT_CATEGORIES, keywordClassify } = require('./transactionClassifier');
 
 // ─── Pattern parsing ──────────────────────────────────────────────────────────
 
@@ -378,8 +379,170 @@ async function parseTransactionsFromPages(pages, options = {}) {
   return { statement, transactions, method: usedPattern ? 'pattern' : 'ai', validation_notes };
 }
 
+// ─── CSV parsing ──────────────────────────────────────────────────────────────
+
+const CSV_TARGETS = ['date', 'description', 'debit', 'credit', 'amount', 'dr_cr', 'balance'];
+// Alias order matters: the first alias present in the headers wins for each target.
+const CSV_ALIASES = {
+  date: ['date', 'txn_date', 'transaction_date', 'tran_date', 'posting_date', 'value_date', 'value_dt'],
+  description: ['description', 'narration', 'particulars', 'details', 'remarks', 'transaction_details', 'transaction_description', 'transaction_remarks'],
+  debit: ['debit', 'withdrawal', 'withdrawal_amt', 'withdrawal_amount', 'debit_amount', 'dr', 'dr_amount'],
+  credit: ['credit', 'deposit', 'deposit_amt', 'deposit_amount', 'credit_amount', 'cr', 'cr_amount'],
+  amount: ['amount', 'transaction_amount', 'amt', 'amount_inr'],
+  dr_cr: ['dr/cr', 'cr/dr', 'debit/credit', 'dr_cr', 'type', 'transaction_type'],
+  balance: ['balance', 'closing_balance', 'running_balance', 'available_balance'],
+};
+
+function normalizeHeader(header) {
+  return String(header || '').trim().toLowerCase()
+    .replace(/\s*\/\s*/g, '/')
+    .replace(/[().]/g, '')
+    .replace(/\s+/g, '_');
+}
+
+/** @returns {Object<string,string>} target field → CSV header */
+function mapByAliases(headers) {
+  const normalized = headers.map(normalizeHeader);
+  const fields = {};
+  for (const [target, aliases] of Object.entries(CSV_ALIASES)) {
+    for (const alias of aliases) {
+      const idx = normalized.indexOf(alias);
+      if (idx >= 0 && !Object.values(fields).includes(headers[idx])) {
+        fields[target] = headers[idx];
+        break;
+      }
+    }
+  }
+  return fields;
+}
+
+/** Bank CSVs often start with a preamble; the header row is the first with date + description columns. */
+function findHeaderRow(rows) {
+  return rows.findIndex((row) => {
+    const cells = row.map(normalizeHeader);
+    return CSV_ALIASES.date.some((a) => cells.includes(a)) && CSV_ALIASES.description.some((a) => cells.includes(a));
+  });
+}
+
+async function mapTransactionCsvColumnsWithAI(headers, sampleRows, ai) {
+  const r = await callAIJson(PROMPTS.csvMap,
+    `CSV headers: ${JSON.stringify(headers)}\nSample rows:\n${JSON.stringify(sampleRows, null, 2)}`, ai, 1024);
+  const fields = {};
+  for (const [header, target] of Object.entries(r.column_mapping || {})) {
+    if (headers.includes(header) && CSV_TARGETS.includes(target) && !fields[target]) fields[target] = header;
+  }
+  if (!fields.date || !fields.description || !(fields.debit || fields.credit || fields.amount)) {
+    throw new Error('AI column mapping missed the date, description or amount columns');
+  }
+  return fields;
+}
+
+function csvRowToTxn(row, fields) {
+  const get = (f) => (fields[f] != null ? row[fields[f]] : undefined);
+  const date = parseTxnDate(get('date'));
+  const description = String(get('description') ?? '').replace(/\s+/g, ' ').trim();
+  if (!date || !description) return null;
+  const debit = parseAmount(get('debit'));
+  const credit = parseAmount(get('credit'));
+  const balance = parseAmount(get('balance'));
+  if (debit) return { date, description, amount: debit, direction: 'debit', balance };
+  if (credit) return { date, description, amount: credit, direction: 'credit', balance };
+  const raw = String(get('amount') ?? '').trim();
+  const amount = parseAmount(raw);
+  if (!amount) return null;
+  const flag = String(get('dr_cr') ?? '').trim().toLowerCase();
+  let direction = null;
+  if (/^(cr|credit|c)$/.test(flag) || /cr$/i.test(raw)) direction = 'credit';
+  else if (/^(dr|debit|d)$/.test(flag) || /dr$/i.test(raw) || raw.startsWith('-')) direction = 'debit';
+  return { date, description, amount, direction, balance };
+}
+
+async function classifyDescriptionsWithAI(txns, statementType, ai) {
+  const results = [];
+  for (let start = 0; start < txns.length; start += CSV_CLASSIFY_BATCH) {
+    const batch = txns.slice(start, start + CSV_CLASSIFY_BATCH).map((t, j) => ({
+      i: start + j, description: t.description, amount: t.amount, direction: t.direction || 'unknown',
+    }));
+    const r = await callAIJson(PROMPTS.classify(statementType), JSON.stringify(batch), ai);
+    for (const c of Array.isArray(r.results) ? r.results : []) {
+      if (Number.isInteger(c.i) && c.i >= 0 && c.i < txns.length) results[c.i] = c;
+    }
+  }
+  return results;
+}
+
+/**
+ * Parse a CSV statement export.
+ * @param {Buffer} buffer
+ * @param {{statementType: 'bank'|'credit_card', apiKey?, apiUrl?, model?, forcePattern?}} options
+ * @returns {Promise<{statement, transactions, method: 'ai'|'pattern', validation_notes: string[]}>}
+ *          Throws an Error with status 422 when the CSV cannot be read.
+ */
+async function parseTransactionsFromCsv(buffer, options = {}) {
+  const statementType = options.statementType === 'credit_card' ? 'credit_card' : 'bank';
+  const ai = options.forcePattern ? null : aiOptions(options);
+  const fail = (message) => Object.assign(new Error(message), { status: 422 });
+
+  let rows;
+  try {
+    rows = parse(buffer, { bom: true, relax_column_count: true, skip_empty_lines: true, trim: true });
+  } catch (err) {
+    throw fail(`CSV parse error: ${err.message}`);
+  }
+  const headerIdx = findHeaderRow(rows);
+  if (headerIdx < 0) throw fail('Could not find a header row with date and description/narration columns');
+  const headers = rows[headerIdx];
+  const records = rows.slice(headerIdx + 1).map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i]])));
+
+  const validation_notes = [];
+  let fields = null;
+  if (ai) {
+    try {
+      fields = await mapTransactionCsvColumnsWithAI(headers, records.slice(0, 3), ai);
+    } catch (err) {
+      validation_notes.push(`AI column mapping failed (${err.message}); used header aliases.`);
+    }
+  }
+  if (!fields) fields = mapByAliases(headers);
+  const parsed = records.map((r) => csvRowToTxn(r, fields)).filter(Boolean);
+
+  let classified = null;
+  if (ai && parsed.length) {
+    try {
+      classified = await classifyDescriptionsWithAI(parsed, statementType, ai);
+    } catch (err) {
+      validation_notes.push(`AI classification failed (${err.message}); used keyword rules.`);
+    }
+  }
+
+  const transactions = parsed.map((t, i) => {
+    const direction = t.direction || 'debit';
+    const c = classified && classified[i];
+    const k = c && KINDS.includes(c.kind) ? c : keywordClassify(t.description, direction, statementType);
+    let confidence = typeof k.confidence === 'number' ? k.confidence : 0.5;
+    if (!t.direction) confidence = Math.min(confidence, 0.4);
+    return {
+      date: t.date, description: t.description, merchant: (c && c.merchant) || null,
+      amount: t.amount, direction, kind: k.kind, category: k.category ?? null, confidence,
+    };
+  });
+
+  // Balances: exports may be oldest-first or newest-first.
+  const statement = { last4: null, period_start: null, period_end: null, opening_balance: null, closing_balance: null };
+  const withBalance = parsed.filter((t) => t.balance != null && t.direction);
+  if (statementType === 'bank' && withBalance.length) {
+    const ascending = parsed[0].date <= parsed[parsed.length - 1].date;
+    const ordered = ascending ? withBalance : [...withBalance].reverse();
+    const first = ordered[0];
+    statement.closing_balance = ordered[ordered.length - 1].balance;
+    statement.opening_balance = Math.round((first.direction === 'credit' ? first.balance - first.amount : first.balance + first.amount) * 100) / 100;
+  }
+  fillPeriodFromTransactions(statement, transactions);
+  return { statement, transactions, method: classified ? 'ai' : 'pattern', validation_notes };
+}
+
 module.exports = {
   PROMPTS,
   parseTxnDate, parseAmount, detectStatementHeader, parsePageWithPattern,
-  parseTransactionsFromPages,
+  parseTransactionsFromPages, parseTransactionsFromCsv,
 };
