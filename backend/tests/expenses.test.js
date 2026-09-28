@@ -189,3 +189,76 @@ describe('transactionClassifier', () => {
     expect(clf.reconciliationNote({ opening_balance: null, closing_balance: 1 }, txns, 'bank')).toBeNull();
   });
 });
+
+// ─── Pattern parser ──────────────────────────────────────────────────────────
+
+const fx = require('./helpers/expenseFixtures');
+
+describe('transactionParser – pattern parsing', () => {
+  const tp = require('../src/utils/transactionParser');
+
+  test('parseTxnDate reads numeric dates day-first and rejects impossible dates', () => {
+    expect(tp.parseTxnDate('05/08/2026')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('05/08/26')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('5-Aug-26')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('05 Aug 2026')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('2026-08-05')).toBe('2026-08-05');
+    expect(tp.parseTxnDate('29/02/2028')).toBe('2028-02-29');
+    expect(tp.parseTxnDate('31/02/2026')).toBeNull();
+    expect(tp.parseTxnDate('13/13/2026')).toBeNull();
+    expect(tp.parseTxnDate('')).toBeNull();
+  });
+
+  test('parseAmount', () => {
+    expect(tp.parseAmount('₹1,00,000.50')).toBe(100000.5);
+    expect(tp.parseAmount('450.00 Cr')).toBe(450);
+    expect(tp.parseAmount('-450.00')).toBe(450);
+    expect(tp.parseAmount(12)).toBe(12);
+    expect(tp.parseAmount('')).toBeNull();
+    expect(tp.parseAmount('abc')).toBeNull();
+  });
+
+  test('detectStatementHeader – bank and card', () => {
+    expect(tp.detectStatementHeader(fx.BANK_TEXT)).toEqual({
+      last4: '4821', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 50000, closing_balance: 124550,
+    });
+    expect(tp.detectStatementHeader(fx.CARD_TEXT)).toEqual({
+      last4: '1234', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 20000, closing_balance: 12300,
+    });
+  });
+
+  test('bank page: value dates stay in the row and direction comes from the running balance', () => {
+    const txns = tp.parsePageWithPattern(fx.BANK_TEXT, 'bank', { prevBalance: 50000 });
+    expect(txns.map((t) => [t.date, t.direction, t.amount, t.kind])).toEqual([
+      ['2026-08-01', 'credit', 100000, 'income'],
+      ['2026-08-03', 'debit', 450, 'expense'],
+      ['2026-08-05', 'debit', 20000, 'expense'],
+      ['2026-08-10', 'debit', 5000, 'investment'],
+    ]);
+    expect(txns[0].description).toBe('SALARY AUG ACME CORP');
+  });
+
+  test('card page: a Cr marker means credit', () => {
+    const txns = tp.parsePageWithPattern(fx.CARD_TEXT, 'credit_card', { prevBalance: 20000 });
+    expect(txns.map((t) => [t.date, t.direction, t.amount])).toEqual([
+      ['2026-08-02', 'debit', 800],
+      ['2026-08-04', 'debit', 3500],
+      ['2026-08-06', 'credit', 20000],
+      ['2026-08-12', 'credit', 1000],
+      ['2026-08-20', 'debit', 9000],
+    ]);
+  });
+
+  test('works on text without line breaks', () => {
+    expect(tp.parsePageWithPattern(fx.BANK_TEXT.replace(/\n/g, ' '), 'bank', { prevBalance: 50000 })).toHaveLength(4);
+  });
+
+  test('the running balance carries across pages', () => {
+    const state = { prevBalance: 50000 };
+    const page1 = tp.parsePageWithPattern(fx.BANK_LINES.slice(0, 7).join('\n'), 'bank', state);
+    const page2 = tp.parsePageWithPattern(fx.BANK_LINES.slice(7).join('\n'), 'bank', state);
+    expect(page1).toHaveLength(2);
+    expect(page2.map((t) => t.direction)).toEqual(['debit', 'debit']);
+    expect(page2.every((t) => t.confidence > 0.4)).toBe(true);
+  });
+});
