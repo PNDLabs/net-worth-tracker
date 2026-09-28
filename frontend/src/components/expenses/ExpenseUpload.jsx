@@ -135,8 +135,8 @@ export default function ExpenseUpload({ onViewTransactions }) {
         source_type: preview.sourceType,
         source_id: preview.sourceId,
         statement: { ...preview.statement, parse_method: preview.method },
-        transactions: toSave.map(({ date, description, merchant, amount, direction, kind, category, needs_review, edited, remember }) =>
-          ({ date, description, merchant, amount, direction, kind, category, needs_review, edited, remember })),
+        transactions: toSave.map(({ date, description, merchant, amount, direction, kind, category, needs_review, edited, remember, dedupe_key }) =>
+          ({ date, description, merchant, amount, direction, kind, category, needs_review, edited, remember, dedupe_key })),
         update_balance: updateBalance,
         force_balance: force,
       });

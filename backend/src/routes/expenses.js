@@ -219,9 +219,14 @@ router.post('/commit', (req, res) => {
       needs_review: t.needs_review ? 1 : 0,
       edited: !!t.edited,
       remember: t.remember !== false,
+      preview_key: /^[0-9a-f]{40}$/.test(String(t.dedupe_key || '')) ? t.dedupe_key : null,
     });
   }
-  const keyed = computeDedupeKeys(clean, sourceType, sourceId);
+  // Keys are numbered by occurrence within the whole statement, so trust the preview's key:
+  // recomputing over a list with the duplicate rows removed would renumber a genuine second
+  // identical transaction onto the key of the one already saved.
+  const keyed = computeDedupeKeys(clean, sourceType, sourceId)
+    .map((t) => (t.preview_key ? { ...t, dedupe_key: t.preview_key } : t));
   const dates = keyed.map((t) => t.date).sort();
   const periodStart = parseTxnDate(statement.period_start) || dates[0];
   const periodEnd = parseTxnDate(statement.period_end) || dates[dates.length - 1];
