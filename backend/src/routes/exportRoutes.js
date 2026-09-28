@@ -14,7 +14,7 @@ const router  = express.Router();
 const db      = require('../db/database');
 const { KINDS, merchantKey, computeDedupeKeys } = require('../utils/transactionClassifier');
 
-const APP_VERSION           = '1.9.2';
+const APP_VERSION           = '1.10.0';
 const EXPORT_SCHEMA_VERSION = 3;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
