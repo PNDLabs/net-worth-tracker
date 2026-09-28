@@ -413,3 +413,104 @@ describe('transactionParser – CSV', () => {
     ]);
   });
 });
+
+// ─── Matcher ─────────────────────────────────────────────────────────────────
+
+describe('transactionMatcher', () => {
+  const { runMatcher } = require('../src/utils/transactionMatcher');
+  const W = { from: '2026-07-01', to: '2026-09-30' };
+  const get = (id) => testDb.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+  let bank;
+  let card;
+
+  beforeEach(() => {
+    bank = insertStatement(testDb, { source_type: 'account', source_id: 1, statement_type: 'bank', last4: '4821' });
+    card = insertStatement(testDb, { source_type: 'liability', source_id: 1, statement_type: 'credit_card', last4: '1234' });
+  });
+
+  const cardPayment = (date, amount = 20000, stmt = card) =>
+    insertTxn(testDb, stmt, { date, description: 'PAYMENT RECEIVED', amount, direction: 'credit', kind: 'cc_payment' });
+  const bankPayment = (date, amount = 20000) =>
+    insertTxn(testDb, bank, { date, description: 'CC PAYMENT XX1234', amount, direction: 'debit', kind: 'cc_payment' });
+
+  test('pairs a bank card-payment debit with the card payment credit', () => {
+    const d = bankPayment('2026-08-05');
+    const c = cardPayment('2026-08-06');
+    expect(runMatcher(testDb, W)).toEqual({ card_payments: 1, promoted: 0, transfers: 0 });
+    expect(get(d).matched_txn_id).toBe(c);
+    expect(get(c).matched_txn_id).toBe(d);
+  });
+
+  test('pairs on a later run, whichever statement arrived first', () => {
+    const c = cardPayment('2026-08-06');
+    expect(runMatcher(testDb, W).card_payments).toBe(0);
+    const d = bankPayment('2026-08-05');
+    expect(runMatcher(testDb, W).card_payments).toBe(1);
+    expect(get(c).matched_txn_id).toBe(d);
+  });
+
+  test('matches within 5 days but not 6', () => {
+    const near = bankPayment('2026-08-01', 500);
+    cardPayment('2026-08-06', 500);
+    const far = bankPayment('2026-08-10', 700);
+    cardPayment('2026-08-16', 700);
+    runMatcher(testDb, W);
+    expect(get(near).matched_txn_id).not.toBeNull();
+    expect(get(far).matched_txn_id).toBeNull();
+  });
+
+  test('allows ₹1 of rounding but not more', () => {
+    const ok = bankPayment('2026-08-05', 20000);
+    cardPayment('2026-08-05', 20000.5);
+    const off = bankPayment('2026-08-20', 3000);
+    cardPayment('2026-08-20', 3002);
+    runMatcher(testDb, W);
+    expect(get(ok).matched_txn_id).not.toBeNull();
+    expect(get(off).matched_txn_id).toBeNull();
+  });
+
+  test('prefers the card whose last4 the narration mentions over a closer date', () => {
+    const otherCard = insertStatement(testDb, { source_type: 'liability', source_id: 2, statement_type: 'credit_card', last4: '9999' });
+    const d = bankPayment('2026-08-05');
+    const wrong = cardPayment('2026-08-05', 20000, otherCard);
+    const right = cardPayment('2026-08-08');
+    runMatcher(testDb, W);
+    expect(get(d).matched_txn_id).toBe(right);
+    expect(get(wrong).matched_txn_id).toBeNull();
+  });
+
+  test('promotes an unrecognised bank debit that matches a card payment and flags it', () => {
+    const d = insertTxn(testDb, bank, { date: '2026-08-12', description: 'NEFT ODD NAME', amount: 7000, direction: 'debit', kind: 'expense', category: 'Other' });
+    cardPayment('2026-08-14', 7000);
+    expect(runMatcher(testDb, W).promoted).toBe(1);
+    expect(get(d)).toMatchObject({ kind: 'cc_payment', category: null, needs_review: 1 });
+  });
+
+  test('never changes a kind the user locked', () => {
+    const d = insertTxn(testDb, bank, { date: '2026-08-12', description: 'NEFT ODD NAME', amount: 7000, direction: 'debit', kind: 'expense', category: 'Rent', kind_locked: 1 });
+    cardPayment('2026-08-14', 7000);
+    runMatcher(testDb, W);
+    expect(get(d)).toMatchObject({ kind: 'expense', category: 'Rent', matched_txn_id: null });
+  });
+
+  test('pairs a transfer between two own bank accounts', () => {
+    const bank2 = insertStatement(testDb, { source_type: 'account', source_id: 2, statement_type: 'bank', last4: '7777' });
+    const d = insertTxn(testDb, bank, { date: '2026-08-15', description: 'IMPS TO A/C XX7777', amount: 3000, direction: 'debit', kind: 'expense', category: 'Other' });
+    const c = insertTxn(testDb, bank2, { date: '2026-08-16', description: 'IMPS FROM', amount: 3000, direction: 'credit', kind: 'income' });
+    expect(runMatcher(testDb, W).transfers).toBe(1);
+    expect(get(d)).toMatchObject({ kind: 'transfer', matched_txn_id: c });
+    expect(get(c)).toMatchObject({ kind: 'transfer', matched_txn_id: d });
+  });
+
+  test('does not treat a debit and credit in the same account as a transfer', () => {
+    insertTxn(testDb, bank, { date: '2026-08-15', description: 'TRANSFER', amount: 3000, direction: 'debit', kind: 'transfer' });
+    insertTxn(testDb, bank, { date: '2026-08-15', description: 'TRANSFER', amount: 3000, direction: 'credit', kind: 'transfer' });
+    expect(runMatcher(testDb, W).transfers).toBe(0);
+  });
+
+  test('an unmatched card payment stays excluded', () => {
+    const d = bankPayment('2026-08-05');
+    runMatcher(testDb, W);
+    expect(get(d)).toMatchObject({ kind: 'cc_payment', matched_txn_id: null });
+  });
+});
