@@ -680,3 +680,141 @@ describe('Expenses API – preview & commit', () => {
     expect(res.body.inserted).toBe(600);
   });
 });
+
+// ─── API: summary, trend, transactions, statements, rules ────────────────────
+
+describe('Expenses API – reporting and editing', () => {
+  let mine;
+  let s1;
+  let reviewId;
+
+  beforeEach(() => {
+    mine = Number(testDb.prepare("INSERT INTO accounts (name, type, balance) VALUES ('Mine', 'savings', 0)").run().lastInsertRowid);
+    const hers = Number(testDb.prepare("INSERT INTO accounts (name, type, balance, family_member) VALUES ('Hers', 'savings', 0, 'spouse')").run().lastInsertRowid);
+    s1 = insertStatement(testDb, { source_type: 'account', source_id: mine, statement_type: 'bank' });
+    const s2 = insertStatement(testDb, { source_type: 'account', source_id: hers, statement_type: 'bank' });
+    insertTxn(testDb, s1, { date: '2026-08-01', amount: 100000, direction: 'credit', kind: 'income' });
+    insertTxn(testDb, s1, { date: '2026-08-03', amount: 20000, direction: 'debit', kind: 'expense', category: 'Rent' });
+    reviewId = insertTxn(testDb, s1, { date: '2026-08-04', description: 'CORNER CAFE', amount: 5000, direction: 'debit', kind: 'expense', category: 'Food & Dining', needs_review: 1 });
+    insertTxn(testDb, s1, { date: '2026-08-06', amount: 1000, direction: 'credit', kind: 'refund', category: 'Food & Dining' });
+    insertTxn(testDb, s1, { date: '2026-08-10', amount: 10000, direction: 'debit', kind: 'investment' });
+    insertTxn(testDb, s1, { date: '2026-08-12', amount: 30000, direction: 'debit', kind: 'cc_payment' });
+    insertTxn(testDb, s2, { date: '2026-08-15', amount: 4000, direction: 'debit', kind: 'expense', category: 'Shopping' });
+    insertTxn(testDb, s1, { date: '2026-07-20', amount: 50000, direction: 'credit', kind: 'income' });
+    insertTxn(testDb, s1, { date: '2026-07-21', amount: 10000, direction: 'debit', kind: 'expense', category: 'Rent' });
+  });
+
+  test('summary: spending is net of refunds; card payments are excluded', async () => {
+    const res = await request(app).get('/api/expenses/summary?month=2026-08');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      month: '2026-08', member: null,
+      income: 100000, spending: 28000, refunds: 1000, invested: 10000,
+      savings_rate: 0.72, investment_rate: 0.1, needs_review_count: 1,
+      excluded: { total: 30000, matched_count: 0, unmatched_count: 1 },
+      net_worth_change: null,
+    });
+    expect(res.body.by_category).toEqual([
+      { category: 'Rent', amount: 20000 },
+      { category: 'Food & Dining', amount: 5000 },
+      { category: 'Shopping', amount: 4000 },
+    ]);
+  });
+
+  test('member filter uses the linked account family member', async () => {
+    const res = await request(app).get('/api/expenses/summary?month=2026-08&member=SPOUSE');
+    expect(res.body).toMatchObject({ member: 'Spouse', income: 0, spending: 4000, savings_rate: null });
+  });
+
+  test('net worth change comes from snapshots inside the month, only for all members', async () => {
+    const snap = (date, nw) => testDb.prepare('INSERT INTO snapshots (snapshot_date, net_worth) VALUES (?, ?)').run(date, nw);
+    snap('2026-06-30', 900000);
+    snap('2026-07-31', 1000000);
+    snap('2026-08-31', 1072000);
+    expect((await request(app).get('/api/expenses/summary?month=2026-08')).body.net_worth_change).toBe(72000);
+    expect((await request(app).get('/api/expenses/summary?month=2026-08&member=Self')).body.net_worth_change).toBeNull();
+    // September has no snapshot inside it: null, not 0.
+    expect((await request(app).get('/api/expenses/summary?month=2026-09')).body.net_worth_change).toBeNull();
+  });
+
+  test('rejects a malformed month', async () => {
+    expect((await request(app).get('/api/expenses/summary?month=2026-8')).status).toBe(400);
+    expect((await request(app).get('/api/expenses/trend?end=202608')).status).toBe(400);
+  });
+
+  test('trend returns one entry per month, oldest first', async () => {
+    const res = await request(app).get('/api/expenses/trend?months=3&end=2026-08');
+    expect(res.body.months.map((m) => m.month)).toEqual(['2026-06', '2026-07', '2026-08']);
+    expect(res.body.months[0]).toEqual({ month: '2026-06', income: 0, spending: 0, invested: 0, savings_rate: null });
+    expect(res.body.months[1]).toEqual({ month: '2026-07', income: 50000, spending: 10000, invested: 0, savings_rate: 0.8 });
+    expect(res.body.months[2]).toMatchObject({ spending: 28000, savings_rate: 0.72 });
+  });
+
+  test('lists transactions with filters, source name and family member', async () => {
+    const review = (await request(app).get('/api/expenses/transactions?month=2026-08&needs_review=1')).body;
+    expect(review).toHaveLength(1);
+    expect(review[0]).toMatchObject({ id: reviewId, source_name: 'Mine', family_member: 'Self', statement_type: 'bank' });
+    expect((await request(app).get('/api/expenses/transactions?kind=cc_payment')).body).toHaveLength(1);
+    expect((await request(app).get('/api/expenses/transactions?member=spouse')).body).toHaveLength(1);
+    expect((await request(app).get('/api/expenses/transactions?month=2026-07')).body).toHaveLength(2);
+  });
+
+  test('editing a transaction clears review, locks the kind and learns a rule', async () => {
+    testDb.prepare('UPDATE transactions SET merchant_key = ? WHERE id = ?').run('CORNER CAFE', reviewId);
+    const res = await request(app).put(`/api/expenses/transactions/${reviewId}`).send({ kind: 'expense', category: 'Groceries' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: reviewId, category: 'Groceries', needs_review: 0, kind_locked: 1, source_name: 'Mine' });
+    expect(testDb.prepare('SELECT kind, category FROM merchant_rules WHERE merchant_key = ?').get('CORNER CAFE'))
+      .toEqual({ kind: 'expense', category: 'Groceries' });
+    expect((await request(app).put(`/api/expenses/transactions/${reviewId}`).send({ kind: 'nope' })).status).toBe(400);
+    expect((await request(app).put('/api/expenses/transactions/99999').send({ kind: 'expense' })).status).toBe(404);
+  });
+
+  test('changing a paired card payment to an expense unpairs both and flags the partner', async () => {
+    const card = insertStatement(testDb, { source_type: 'liability', source_id: 1, statement_type: 'credit_card' });
+    const debit = insertTxn(testDb, s1, { date: '2026-08-20', amount: 700, direction: 'debit', kind: 'cc_payment' });
+    const credit = insertTxn(testDb, card, { date: '2026-08-21', amount: 700, direction: 'credit', kind: 'cc_payment', matched_txn_id: debit });
+    testDb.prepare('UPDATE transactions SET matched_txn_id = ? WHERE id = ?').run(credit, debit);
+
+    await request(app).put(`/api/expenses/transactions/${debit}`).send({ kind: 'expense', category: 'Other', remember: false });
+
+    const get = (id) => testDb.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
+    expect(get(debit)).toMatchObject({ kind: 'expense', matched_txn_id: null });
+    expect(get(credit)).toMatchObject({ matched_txn_id: null, needs_review: 1 });
+    expect(testDb.prepare('SELECT COUNT(*) AS n FROM merchant_rules').get().n).toBe(0);
+  });
+
+  test('deleting a statement removes its rows and flags partners in other statements', async () => {
+    const card = insertStatement(testDb, { source_type: 'liability', source_id: 1, statement_type: 'credit_card' });
+    const debit = insertTxn(testDb, s1, { date: '2026-08-20', amount: 700, direction: 'debit', kind: 'cc_payment' });
+    const credit = insertTxn(testDb, card, { date: '2026-08-21', amount: 700, direction: 'credit', kind: 'cc_payment', matched_txn_id: debit });
+    testDb.prepare('UPDATE transactions SET matched_txn_id = ? WHERE id = ?').run(credit, debit);
+
+    expect((await request(app).delete(`/api/expenses/statements/${card}`)).status).toBe(200);
+    expect(testDb.prepare('SELECT matched_txn_id, needs_review, kind FROM transactions WHERE id = ?').get(debit))
+      .toEqual({ matched_txn_id: null, needs_review: 1, kind: 'cc_payment' });
+    expect((await request(app).delete(`/api/expenses/statements/${card}`)).status).toBe(404);
+  });
+
+  test('lists statements with source name and transaction count', async () => {
+    testDb.prepare('DELETE FROM accounts WHERE name = ?').run('Hers');
+    const list = (await request(app).get('/api/expenses/statements')).body;
+    expect(list).toHaveLength(2);
+    expect(list.find((s) => s.id === s1)).toMatchObject({ source_name: 'Mine', transaction_count: 8 });
+    expect(list.find((s) => s.id !== s1)).toMatchObject({ source_name: null, transaction_count: 1 });
+  });
+
+  test('lists and deletes learned rules', async () => {
+    const id = Number(testDb.prepare("INSERT INTO merchant_rules (merchant_key, kind, category) VALUES ('SWIGGY', 'expense', 'Food & Dining')").run().lastInsertRowid);
+    expect((await request(app).get('/api/expenses/rules')).body).toEqual([expect.objectContaining({ id, merchant_key: 'SWIGGY' })]);
+    expect((await request(app).delete(`/api/expenses/rules/${id}`)).status).toBe(200);
+    expect((await request(app).get('/api/expenses/rules')).body).toEqual([]);
+  });
+
+  test('categories include the defaults plus custom ones in use', async () => {
+    insertTxn(testDb, s1, { date: '2026-08-22', amount: 50, direction: 'debit', kind: 'expense', category: 'Pets' });
+    const cats = (await request(app).get('/api/expenses/categories')).body;
+    expect(cats).toEqual(expect.arrayContaining(['Groceries', 'Other', 'Pets']));
+    expect(cats.filter((c) => c === 'Rent')).toHaveLength(1);
+  });
+});

@@ -23,8 +23,9 @@ const db = require('../db/database');
 const pdfExtractor = require('../utils/pdfExtractor');
 const { parseTransactionsFromPages, parseTransactionsFromCsv, parseTxnDate } = require('../utils/transactionParser');
 const {
-  KINDS, EXCLUDED_KINDS, merchantKey, applyPostProcessing, computeDedupeKeys, reconciliationNote,
+  KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, merchantKey, applyPostProcessing, computeDedupeKeys, reconciliationNote,
 } = require('../utils/transactionClassifier');
+const { normalizeFamilyMember } = require('../utils/familyMember');
 const { runMatcher } = require('../utils/transactionMatcher');
 
 const upload = multer({
@@ -309,6 +310,229 @@ router.post('/commit', (req, res) => {
   })();
 
   res.status(201).json(result);
+});
+
+// ─── Reporting helpers ────────────────────────────────────────────────────────
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const round2 = (v) => Math.round(v * 100) / 100;
+const rate = (part, whole) => (whole > 0 ? Math.round((part / whole) * 10000) / 10000 : null);
+
+const TXN_SELECT = `
+  SELECT t.*, s.statement_type,
+         COALESCE(a.name, l.name) AS source_name,
+         COALESCE(a.family_member, l.family_member) AS family_member
+    FROM transactions t
+    JOIN expense_statements s ON s.id = t.statement_id
+    LEFT JOIN accounts a    ON t.source_type = 'account'   AND a.id = t.source_id
+    LEFT JOIN liabilities l ON t.source_type = 'liability' AND l.id = t.source_id`;
+
+function withMember(row) {
+  return row && { ...row, family_member: normalizeFamilyMember(row.family_member) };
+}
+
+function monthRange(month) {
+  const [y, m] = month.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, '0')}` };
+}
+
+function addMonths(month, delta) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+/** Rows between two ISO dates, optionally for one family member. */
+function loadTransactions(conn, { from, to }, member) {
+  const rows = conn.prepare(`${TXN_SELECT} WHERE t.txn_date BETWEEN ? AND ? ORDER BY t.txn_date DESC, t.id DESC`)
+    .all(from, to).map(withMember);
+  if (!member) return rows;
+  const wanted = normalizeFamilyMember(member);
+  return rows.filter((r) => r.family_member === wanted);
+}
+
+function aggregate(rows) {
+  const sum = (kind) => rows.filter((r) => r.kind === kind).reduce((s, r) => s + r.amount, 0);
+  const income = sum('income');
+  const refunds = sum('refund');
+  const spending = sum('expense') - refunds;
+  const invested = sum('investment');
+  return {
+    income: round2(income),
+    spending: round2(spending),
+    refunds: round2(refunds),
+    invested: round2(invested),
+    savings_rate: rate(income - spending, income),
+    investment_rate: rate(invested, income),
+  };
+}
+
+/** Change between the last snapshot before the month and the last snapshot inside it. */
+function netWorthChange(conn, { from, to }) {
+  const end = conn.prepare(
+    'SELECT net_worth FROM snapshots WHERE snapshot_date BETWEEN ? AND ? ORDER BY snapshot_date DESC, id DESC LIMIT 1'
+  ).get(from, to);
+  const start = conn.prepare(
+    'SELECT net_worth FROM snapshots WHERE snapshot_date < ? ORDER BY snapshot_date DESC, id DESC LIMIT 1'
+  ).get(from);
+  return end && start ? round2(end.net_worth - start.net_worth) : null;
+}
+
+// ─── GET /api/expenses/summary ────────────────────────────────────────────────
+
+router.get('/summary', (req, res) => {
+  const month = req.query.month || today().slice(0, 7);
+  if (!MONTH_RE.test(month)) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const member = req.query.member ? normalizeFamilyMember(req.query.member) : null;
+  const conn = db.getDb();
+  const range = monthRange(month);
+  const rows = loadTransactions(conn, range, member);
+
+  const byCategory = new Map();
+  for (const r of rows) {
+    if (r.kind !== 'expense') continue;
+    const c = r.category || 'Other';
+    byCategory.set(c, (byCategory.get(c) || 0) + r.amount);
+  }
+  // Money that left an account without counting as spending (the bank side of each pair).
+  const excluded = rows.filter((r) => EXCLUDED_KINDS.includes(r.kind) && r.direction === 'debit');
+
+  res.json({
+    month,
+    member,
+    ...aggregate(rows),
+    by_category: [...byCategory.entries()]
+      .map(([category, amount]) => ({ category, amount: round2(amount) }))
+      .sort((a, b) => b.amount - a.amount),
+    excluded: {
+      total: round2(excluded.reduce((s, r) => s + r.amount, 0)),
+      matched_count: excluded.filter((r) => r.matched_txn_id).length,
+      unmatched_count: excluded.filter((r) => !r.matched_txn_id).length,
+    },
+    needs_review_count: rows.filter((r) => r.needs_review).length,
+    // Snapshots are household-wide, so a per-member change is not meaningful.
+    net_worth_change: member ? null : netWorthChange(conn, range),
+  });
+});
+
+// ─── GET /api/expenses/trend ──────────────────────────────────────────────────
+
+router.get('/trend', (req, res) => {
+  const end = req.query.end || today().slice(0, 7);
+  if (!MONTH_RE.test(end)) return res.status(400).json({ error: 'end must be YYYY-MM' });
+  const count = Math.min(Math.max(parseInt(req.query.months, 10) || 12, 1), 36);
+  const months = Array.from({ length: count }, (_, i) => addMonths(end, i - count + 1));
+  const rows = loadTransactions(db.getDb(), { from: `${months[0]}-01`, to: monthRange(end).to }, req.query.member);
+
+  res.json({
+    months: months.map((month) => {
+      const a = aggregate(rows.filter((r) => r.txn_date.startsWith(month)));
+      return { month, income: a.income, spending: a.spending, invested: a.invested, savings_rate: a.savings_rate };
+    }),
+  });
+});
+
+// ─── GET /api/expenses/transactions ───────────────────────────────────────────
+
+router.get('/transactions', (req, res) => {
+  const { month, kind, category, member, needs_review: needsReview } = req.query;
+  if (month && !MONTH_RE.test(month)) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const range = month ? monthRange(month) : { from: '0000-01-01', to: '9999-12-31' };
+  let rows = loadTransactions(db.getDb(), range, member);
+  if (kind) rows = rows.filter((r) => r.kind === kind);
+  if (category) rows = rows.filter((r) => r.category === category);
+  if (needsReview === '1' || needsReview === 'true') rows = rows.filter((r) => r.needs_review);
+  res.json(rows);
+});
+
+// ─── PUT /api/expenses/transactions/:id ───────────────────────────────────────
+
+router.put('/transactions/:id', (req, res) => {
+  const conn = db.getDb();
+  const existing = conn.prepare('SELECT * FROM transactions WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Transaction not found' });
+  const { kind, category, remember = true } = req.body || {};
+  if (kind !== undefined && !KINDS.includes(kind)) {
+    return res.status(400).json({ error: `kind must be one of: ${KINDS.join(', ')}` });
+  }
+
+  const newKind = kind !== undefined ? kind : existing.kind;
+  const newCategory = EXCLUDED_KINDS.includes(newKind)
+    ? null
+    : (category !== undefined ? (category || null) : existing.category);
+
+  conn.transaction(() => {
+    conn.prepare(
+      `UPDATE transactions
+          SET kind = ?, category = ?, needs_review = 0,
+              kind_locked = CASE WHEN ? = 1 THEN 1 ELSE kind_locked END,
+              updated_at = datetime('now')
+        WHERE id = ?`
+    ).run(newKind, newCategory, kind !== undefined ? 1 : 0, existing.id);
+
+    // A row that is no longer a card payment/transfer releases its partner for review.
+    if (existing.matched_txn_id && !EXCLUDED_KINDS.includes(newKind)) {
+      conn.prepare(`UPDATE transactions SET matched_txn_id = NULL, needs_review = 1, updated_at = datetime('now') WHERE id = ?`)
+        .run(existing.matched_txn_id);
+      conn.prepare('UPDATE transactions SET matched_txn_id = NULL WHERE id = ?').run(existing.id);
+    }
+    if (remember && existing.merchant_key) {
+      conn.prepare(UPSERT_RULE_SQL).run(existing.merchant_key, newKind, newCategory);
+    }
+  })();
+
+  res.json(withMember(conn.prepare(`${TXN_SELECT} WHERE t.id = ?`).get(existing.id)));
+});
+
+// ─── Statements ───────────────────────────────────────────────────────────────
+
+router.get('/statements', (req, res) => {
+  res.json(db.getDb().prepare(
+    `SELECT s.*, COALESCE(a.name, l.name) AS source_name,
+            (SELECT COUNT(*) FROM transactions t WHERE t.statement_id = s.id) AS transaction_count
+       FROM expense_statements s
+       LEFT JOIN accounts a    ON s.source_type = 'account'   AND a.id = s.source_id
+       LEFT JOIN liabilities l ON s.source_type = 'liability' AND l.id = s.source_id
+      ORDER BY s.period_end DESC, s.id DESC`
+  ).all());
+});
+
+router.delete('/statements/:id', (req, res) => {
+  const conn = db.getDb();
+  const id = Number(req.params.id);
+  if (!conn.prepare('SELECT id FROM expense_statements WHERE id = ?').get(id)) {
+    return res.status(404).json({ error: 'Statement not found' });
+  }
+  conn.transaction(() => {
+    // Partners in other statements lose their pair (FK ON DELETE SET NULL); flag them for a look.
+    conn.prepare(
+      `UPDATE transactions SET needs_review = 1, updated_at = datetime('now')
+        WHERE statement_id != ?
+          AND id IN (SELECT matched_txn_id FROM transactions WHERE statement_id = ? AND matched_txn_id IS NOT NULL)`
+    ).run(id, id);
+    conn.prepare('DELETE FROM expense_statements WHERE id = ?').run(id);
+  })();
+  res.json({ message: 'Statement deleted' });
+});
+
+// ─── Rules and categories ─────────────────────────────────────────────────────
+
+router.get('/rules', (req, res) => {
+  res.json(db.getDb().prepare('SELECT * FROM merchant_rules ORDER BY merchant_key').all());
+});
+
+router.delete('/rules/:id', (req, res) => {
+  const r = db.getDb().prepare('DELETE FROM merchant_rules WHERE id = ?').run(req.params.id);
+  if (!r.changes) return res.status(404).json({ error: 'Rule not found' });
+  res.json({ message: 'Rule deleted' });
+});
+
+router.get('/categories', (req, res) => {
+  const used = db.getDb().prepare(
+    'SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL ORDER BY category'
+  ).all().map((r) => r.category);
+  res.json([...new Set([...DEFAULT_CATEGORIES, ...used])]);
 });
 
 module.exports = router;
