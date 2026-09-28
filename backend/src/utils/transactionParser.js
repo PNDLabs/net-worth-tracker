@@ -58,13 +58,29 @@ function parseAmount(value) {
   return Number.isFinite(n) && n !== 0 ? Math.abs(n) : null;
 }
 
+/**
+ * Parse a balance keeping its sign. A leading "-" is negative; so is "Dr" on a bank
+ * balance (overdrawn) and "Cr" on a card balance (paid in advance). Zero is a valid balance.
+ */
+function parseSignedBalance(value, statementType = 'bank') {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value).trim();
+  const cleaned = raw.replace(/₹|rs\.?|inr|\s|,/gi, '').replace(/(dr|cr)$/i, '').replace(/^-/, '');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  const negativeMark = statementType === 'credit_card' ? /cr$/i : /dr$/i;
+  return raw.startsWith('-') || negativeMark.test(raw) ? -n : n;
+}
+
 /** Regex detection of statement header fields (last4, period, opening/closing balance). */
-function detectStatementHeader(text) {
+function detectStatementHeader(text, statementType = 'bank') {
   const t = String(text || '');
-  const AMT = String.raw`(?:₹|Rs\.?|INR)?\s*([\d,]+\.\d{2})`;
+  const AMT = String.raw`(?:₹|Rs\.?|INR)?\s*(-?[\d,]+\.\d{2})(?:\s*(Dr|Cr)\b)?`;
   const amountAfter = (labels) => {
     const m = t.match(new RegExp(`(?:${labels})\\s*:?\\s*${AMT}`, 'i'));
-    return m ? parseAmount(m[1]) : null;
+    return m ? parseSignedBalance(m[1] + (m[2] || ''), statementType) : null;
   };
   const last4 = (t.match(/(?:X{2,}|x{2,}|\*{2,})[\s-]?(\d{4})(?!\d)/) || [])[1] || null;
   const period = t.match(new RegExp(`(?:statement\\s*period|period|from)\\s*:?\\s*(${DATE_TOKEN})\\s*(?:to|-|–)\\s*:?\\s*(${DATE_TOKEN})`, 'i'));
@@ -104,8 +120,13 @@ function parsePageWithPattern(pageText, statementType, state = {}) {
     const date = parseTxnDate(row.date);
     if (!amounts.length || !date) continue;
     const first = amounts[0];
-    const amount = parseAmount(first[1]);
-    const balance = amounts.length >= 2 ? parseAmount(amounts[amounts.length - 1][1]) : null;
+    const last = amounts[amounts.length - 1];
+    const isCard = statementType === 'credit_card';
+    // Card rows have no running balance: a second amount is the billed INR amount after a
+    // foreign-currency one. Bank rows end with the running balance.
+    const amountToken = isCard ? last : first;
+    const amount = parseAmount(amountToken[1]);
+    const balance = !isCard && amounts.length >= 2 ? parseSignedBalance(last[1] + (last[2] || ''), 'bank') : null;
     const description = body.slice(0, first.index).replace(new RegExp(DATE_TOKEN, 'g'), ' ').replace(/\s+/g, ' ').trim();
     if (!amount || !description || description.length > 200 || SKIP_ROW_RE.test(description)) {
       if (balance != null) state.prevBalance = balance;
@@ -113,10 +134,13 @@ function parsePageWithPattern(pageText, statementType, state = {}) {
     }
     let direction;
     let certain = true;
-    if (first[2]) direction = /cr/i.test(first[2]) ? 'credit' : 'debit';
+    const marker = amountToken[2] || (isCard ? first[2] : null);
+    if (marker) direction = /cr/i.test(marker) ? 'credit' : 'debit';
     else if (balance != null && state.prevBalance != null) direction = balance > state.prevBalance ? 'credit' : 'debit';
-    else if (statementType === 'credit_card') direction = /PAYMENT|REFUND|REVERSAL|CASHBACK|THANK YOU/i.test(description) ? 'credit' : 'debit';
-    else { direction = 'debit'; certain = false; }
+    else if (isCard) direction = /PAYMENT|REFUND|REVERSAL|CASHBACK|THANK YOU/i.test(description) ? 'credit' : 'debit';
+    else certain = false;
+    if (!direction) direction = 'debit';
+    if (isCard && amounts.length >= 2) certain = false;
     if (balance != null) state.prevBalance = balance;
 
     const k = keywordClassify(description, direction, statementType);
@@ -344,7 +368,7 @@ function fillPeriodFromTransactions(statement, transactions) {
 async function parseTransactionsFromPages(pages, options = {}) {
   const statementType = options.statementType === 'credit_card' ? 'credit_card' : 'bank';
   const ai = options.forcePattern ? null : aiOptions(options);
-  const statement = detectStatementHeader(pages.join('\n'));
+  const statement = detectStatementHeader(pages.join('\n'), statementType);
   const aiFilled = new Set();
   const state = { prevBalance: statement.opening_balance };
   const transactions = [];
@@ -444,7 +468,7 @@ function csvRowToTxn(row, fields) {
   if (!date || !description) return null;
   const debit = parseAmount(get('debit'));
   const credit = parseAmount(get('credit'));
-  const balance = parseAmount(get('balance'));
+  const balance = parseSignedBalance(get('balance'), 'bank');
   if (debit) return { date, description, amount: debit, direction: 'debit', balance };
   if (credit) return { date, description, amount: credit, direction: 'credit', balance };
   const raw = String(get('amount') ?? '').trim();

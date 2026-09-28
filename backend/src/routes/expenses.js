@@ -291,15 +291,18 @@ router.post('/commit', (req, res) => {
 
     let balanceUpdated = false;
     if (updateBalance) {
+      // A card in credit (negative closing balance) owes nothing; liabilities are stored as
+      // amounts owed, so a negative value would be counted as debt.
+      const newBalance = resolved.entityType === 'liability' ? Math.max(closing, 0) : closing;
       if (resolved.entityType === 'account') {
-        conn.prepare(`UPDATE accounts SET balance = ?, updated_at = datetime('now') WHERE id = ?`).run(closing, sourceId);
+        conn.prepare(`UPDATE accounts SET balance = ?, updated_at = datetime('now') WHERE id = ?`).run(newBalance, sourceId);
       } else {
-        conn.prepare(`UPDATE liabilities SET current_balance = ?, updated_at = datetime('now') WHERE id = ?`).run(closing, sourceId);
+        conn.prepare(`UPDATE liabilities SET current_balance = ?, updated_at = datetime('now') WHERE id = ?`).run(newBalance, sourceId);
       }
       conn.prepare(
         `INSERT INTO value_history (entity_type, entity_id, value, recorded_at, notes)
          VALUES (?, ?, ?, ?, 'expense statement import')`
-      ).run(resolved.entityType, sourceId, closing, periodEnd || today());
+      ).run(resolved.entityType, sourceId, newBalance, periodEnd || today());
       balanceUpdated = true;
     }
 
