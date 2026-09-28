@@ -80,3 +80,17 @@ describe('Expense schema (v9)', () => {
     expect(testDb.prepare('SELECT matched_txn_id FROM transactions WHERE id = ?').get(debit).matched_txn_id).toBeNull();
   });
 });
+
+// ─── Family member helper ────────────────────────────────────────────────────
+
+describe('normalizeFamilyMember', () => {
+  const { normalizeFamilyMember, DEFAULT_FAMILY_MEMBER } = require('../src/utils/familyMember');
+
+  test('matches the existing normalisation used by accounts and net worth', () => {
+    expect(DEFAULT_FAMILY_MEMBER).toBe('Self');
+    expect(normalizeFamilyMember(undefined)).toBe('Self');
+    expect(normalizeFamilyMember('   ')).toBe('Self');
+    expect(normalizeFamilyMember('you')).toBe('Self');
+    expect(normalizeFamilyMember('  jane   DOE ')).toBe('Jane Doe');
+  });
+});
