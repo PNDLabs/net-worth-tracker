@@ -15,7 +15,7 @@
  *   AI_API_KEY (or OPENAI_API_KEY), AI_API_URL (default https://api.openai.com/v1),
  *   AI_MODEL (default gpt-4o-mini)
  */
-const { keywordClassify } = require('./transactionClassifier');
+const { DEFAULT_CATEGORIES, keywordClassify } = require('./transactionClassifier');
 
 // ─── Pattern parsing ──────────────────────────────────────────────────────────
 
@@ -127,6 +127,259 @@ function parsePageWithPattern(pageText, statementType, state = {}) {
   return txns;
 }
 
+// ─── AI parsing ───────────────────────────────────────────────────────────────
+
+const STATEMENT_FIELDS = ['last4', 'period_start', 'period_end', 'opening_balance', 'closing_balance'];
+const AI_MAX_TOKENS = 8192;
+const CSV_CLASSIFY_BATCH = 100;
+
+const KIND_RULES = `- kind:
+  - income: salary, interest, dividends, refunds of tax, reimbursements received.
+  - investment: SIP, mutual fund, stock broker (Zerodha, Groww, Upstox, Kuvera, Angel One), NPS, PPF, clearing corporation (ICCL, NSE Clearing) debits.
+  - cc_payment: paying a credit card bill (bank debit such as "CC PAYMENT", "CREDIT CARD", "AUTOPAY", "CRED") or, on a card statement, the bill payment received.
+  - transfer: moving money between the account holder's own accounts.
+  - refund: money returned by a merchant (refund, reversal, cashback).
+  - expense: everything else that is spending.
+- category (expense and refund only, else null): ${DEFAULT_CATEGORIES.join(', ')}.
+- UPI narrations look like UPI/<ref>/<payee>/<vpa>/<note>; the payee is the merchant. A payment to a person's name (not a business) gets category "Other" and confidence below 0.7 unless the note makes the purpose clear.
+- confidence: 0.0–1.0, how sure you are of kind and category.`;
+
+const statementLabel = (statementType) => (statementType === 'credit_card' ? 'credit card' : 'bank account');
+const statementRules = (statementType) => (statementType === 'credit_card'
+  ? `- This is a CREDIT CARD statement: purchases, fees, interest and EMIs are debits; payments received, refunds, reversals and cashback are credits. "Previous Balance" is opening_balance and "Total Amount Due" is closing_balance.`
+  : '- This is a BANK ACCOUNT statement: withdrawals are debits and deposits are credits.');
+
+const PROMPTS = {
+  extract: (statementType) => `You are a bank and credit card statement transaction extractor. The user sends the raw text of ONE PAGE of a ${statementLabel(statementType)} statement (from an Indian bank or card issuer unless the text says otherwise).
+
+Return ONLY a JSON object in EXACTLY this format – no markdown fences, no prose:
+{
+  "statement": { "last4": "<last 4 digits of the account/card number, or null>", "period_start": "YYYY-MM-DD or null", "period_end": "YYYY-MM-DD or null", "opening_balance": <number or null>, "closing_balance": <number or null> },
+  "transactions": [
+    { "date": "YYYY-MM-DD", "description": "<narration exactly as printed>", "merchant": "<short clean merchant or payee name>", "amount": <positive number>, "direction": "debit|credit", "kind": "<kind>", "category": "<category or null>", "confidence": <number> }
+  ]
+}
+
+Rules:
+- One entry per transaction row. Skip headers, opening/closing balance lines, totals and reward summaries.
+- Dates are day-first: 05/08/2026 is 5 August 2026.
+- Amounts use the Indian format (1,00,000.00 = 100000). Remove currency symbols and commas. Amounts are always positive; "direction" carries the sign.
+- Direction: "Dr"/withdrawal = debit, "Cr"/deposit = credit. When only a running balance is shown, a rising balance means credit.
+${statementRules(statementType)}
+${KIND_RULES}
+- statement: fill from the page header when present, otherwise null.`,
+
+  validate: `You are a transaction extraction validator. You receive the raw text of ONE statement page and an initial JSON extraction of its transactions.
+
+Cross-check every transaction against the raw text and return the corrected result in EXACTLY this format – no markdown fences, no prose:
+{ "statement": { <same fields as the input> }, "transactions": [ <same schema as the input> ], "validation_notes": [ "<one short string per change>" ] }
+
+Rules:
+- Add transaction rows present in the raw text but missing from the extraction.
+- Remove rows that are not transactions (headers, balances, totals).
+- Fix amounts that do not exactly match the text (Indian format 1,00,000.00 = 100000; watch for factor-of-10/100/1000 errors).
+- Fix debit/credit that contradicts Dr/Cr markers, withdrawal/deposit columns or the running balance.
+- Fix dates (day-first: 05/08/2026 = 5 August 2026).
+- Keep kind and category unless clearly wrong.
+- validation_notes is [] when nothing changed.`,
+
+  review: `You are a specialist transaction accuracy reviewer. You receive the raw text of ONE statement page and a validated JSON extraction.
+
+Your ONLY job is to catch and fix three kinds of error:
+1. AMOUNT – every amount must equal the raw text exactly (Indian format; no magnitude errors).
+2. DIRECTION – debit vs credit must match Dr/Cr markers, columns or the running balance.
+3. KIND – credit card bill payments are "cc_payment"; salary is "income"; SIP / mutual fund / broker / NPS / PPF debits are "investment"; merchant refunds and reversals are "refund".
+
+Return EXACTLY this JSON – no markdown fences, no prose:
+{ "statement": { <same fields> }, "transactions": [ <same schema> ], "accuracy_notes": [ "<one short string per correction>" ] }
+accuracy_notes is [] when nothing changed.`,
+
+  csvMap: `You are a bank statement CSV column mapper. Map each CSV header to one target field:
+- date: transaction date (prefer the transaction/posting date over the value date)
+- description: narration / particulars / details / remarks
+- debit: withdrawal / debit amount column
+- credit: deposit / credit amount column
+- amount: a single amount column (only when there are no separate debit and credit columns)
+- dr_cr: a column that says Dr/Cr or Debit/Credit
+- balance: running / closing balance
+Map anything else (cheque or reference numbers, the value date when a transaction date exists) to null. Never map two headers to the same target.
+
+Return ONLY JSON, no markdown fences: { "column_mapping": { "<csv header>": "<target or null>" } }`,
+
+  classify: (statementType) => `You are a transaction classifier for a ${statementLabel(statementType)} statement (from an Indian bank or card issuer unless stated otherwise). The user sends a JSON array of transactions: { "i": <index>, "description", "amount", "direction" }.
+
+Return ONLY JSON, no markdown fences:
+{ "results": [ { "i": <same index>, "merchant": "<short clean name>", "kind": "<kind>", "category": "<category or null>", "confidence": <number> } ] }
+
+${statementRules(statementType)}
+${KIND_RULES}`,
+};
+
+function aiOptions(options = {}) {
+  const apiKey = options.apiKey || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    apiUrl: options.apiUrl || process.env.AI_API_URL || 'https://api.openai.com/v1',
+    model: options.model || process.env.AI_MODEL || 'gpt-4o-mini',
+  };
+}
+
+async function callAIJson(systemPrompt, userMessage, ai, maxTokens = AI_MAX_TOKENS) {
+  const response = await fetch(`${ai.apiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
+    body: JSON.stringify({
+      model: ai.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0,
+      max_tokens: maxTokens,
+    }),
+  });
+  if (!response.ok) {
+    const err = await response.text().catch(() => '');
+    throw new Error(`AI API error ${response.status}: ${err}`);
+  }
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content?.trim();
+  if (!content) throw new Error('AI returned empty response');
+  const cleaned = content.replace(/^`{3}(?:json)?\s*/i, '').replace(/`{3}\s*$/, '').trim();
+  return JSON.parse(cleaned);
+}
+
+/** Normalise one AI transaction; returns null when date, amount, direction or description is unusable. */
+function sanitizeAiTxn(t) {
+  if (!t || typeof t !== 'object') return null;
+  const date = parseTxnDate(t.date);
+  const amount = parseAmount(t.amount);
+  const direction = t.direction === 'debit' || t.direction === 'credit' ? t.direction : null;
+  const description = String(t.description || '').replace(/\s+/g, ' ').trim();
+  if (!date || !amount || !direction || !description) return null;
+  return {
+    date, description, amount, direction,
+    merchant: t.merchant ? String(t.merchant) : null,
+    kind: typeof t.kind === 'string' ? t.kind : null,
+    category: t.category ? String(t.category) : null,
+    confidence: typeof t.confidence === 'number' ? t.confidence : null,
+  };
+}
+
+/** Copy AI header fields into `target`; the first page that supplies a field wins. */
+function mergeAiStatement(target, aiStatement, filled) {
+  if (!aiStatement || typeof aiStatement !== 'object') return;
+  for (const field of STATEMENT_FIELDS) {
+    if (filled.has(field)) continue;
+    const raw = aiStatement[field];
+    let value;
+    if (field === 'last4') value = /^\d{4}$/.test(String(raw ?? '')) ? String(raw) : null;
+    else if (field.startsWith('period')) value = parseTxnDate(raw);
+    else value = typeof raw === 'number' ? raw : parseAmount(raw);
+    if (value != null) {
+      target[field] = value;
+      filled.add(field);
+    }
+  }
+}
+
+/** Three AI passes over one page, with the same acceptance rules as parseStatement(). */
+async function parsePageWithAI(pageText, statementType, ai) {
+  const pass1 = await callAIJson(PROMPTS.extract(statementType), pageText, ai);
+  const txns1 = Array.isArray(pass1.transactions) ? pass1.transactions : [];
+  let result = { statement: pass1.statement || {}, transactions: txns1, notes: [] };
+  if (txns1.length === 0) return result;
+
+  // Pass 2: accepted only when it does not drop rows.
+  let pass2 = null;
+  try {
+    const refined = await callAIJson(PROMPTS.validate,
+      `RAW TEXT:\n${pageText}\n\nINITIAL EXTRACTION:\n${JSON.stringify(pass1, null, 2)}`, ai);
+    if (Array.isArray(refined.transactions) && refined.transactions.length >= txns1.length) {
+      pass2 = {
+        statement: refined.statement || result.statement,
+        transactions: refined.transactions,
+        notes: Array.isArray(refined.validation_notes) ? refined.validation_notes : [],
+      };
+      result = pass2;
+    }
+  } catch (_validateErr) {
+    // Validation failed — keep Pass 1.
+  }
+
+  // Pass 3: only when Pass 2 corrected something.
+  if (pass2 && pass2.notes.length > 0) {
+    try {
+      const reviewed = await callAIJson(PROMPTS.review,
+        `RAW TEXT:\n${pageText}\n\nVALIDATED EXTRACTION:\n${JSON.stringify({ statement: pass2.statement, transactions: pass2.transactions }, null, 2)}`, ai);
+      if (Array.isArray(reviewed.transactions) && reviewed.transactions.length > 0) {
+        result = {
+          statement: reviewed.statement || pass2.statement,
+          transactions: reviewed.transactions,
+          notes: [...pass2.notes, ...(Array.isArray(reviewed.accuracy_notes) ? reviewed.accuracy_notes : [])],
+        };
+      }
+    } catch (_reviewErr) {
+      // Review failed — keep Pass 2.
+    }
+  }
+  return result;
+}
+
+function fillPeriodFromTransactions(statement, transactions) {
+  if (!transactions.length) return;
+  const dates = transactions.map((t) => t.date).sort();
+  if (!statement.period_start) statement.period_start = dates[0];
+  if (!statement.period_end) statement.period_end = dates[dates.length - 1];
+}
+
+/**
+ * Parse PDF statement pages.
+ * @param {string[]} pages
+ * @param {{statementType: 'bank'|'credit_card', apiKey?, apiUrl?, model?, forcePattern?}} options
+ * @returns {Promise<{statement, transactions, method: 'ai'|'pattern', validation_notes: string[]}>}
+ */
+async function parseTransactionsFromPages(pages, options = {}) {
+  const statementType = options.statementType === 'credit_card' ? 'credit_card' : 'bank';
+  const ai = options.forcePattern ? null : aiOptions(options);
+  const statement = detectStatementHeader(pages.join('\n'));
+  const aiFilled = new Set();
+  const state = { prevBalance: statement.opening_balance };
+  const transactions = [];
+  const validation_notes = [];
+  let usedPattern = !ai;
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    if (!page || !page.trim()) continue;
+    let pageTxns = [];
+    if (ai) {
+      try {
+        const r = await parsePageWithAI(page, statementType, ai);
+        mergeAiStatement(statement, r.statement, aiFilled);
+        pageTxns = r.transactions.map(sanitizeAiTxn).filter(Boolean);
+        validation_notes.push(...r.notes.map((n) => `Page ${i + 1}: ${n}`));
+      } catch (err) {
+        validation_notes.push(`Page ${i + 1}: AI parsing failed (${err.message}); used the pattern parser.`);
+      }
+    }
+    if (pageTxns.length === 0) {
+      const fallback = parsePageWithPattern(page, statementType, state);
+      if (fallback.length > 0) {
+        pageTxns = fallback;
+        usedPattern = true;
+      }
+    }
+    transactions.push(...pageTxns);
+  }
+
+  fillPeriodFromTransactions(statement, transactions);
+  return { statement, transactions, method: usedPattern ? 'pattern' : 'ai', validation_notes };
+}
+
 module.exports = {
+  PROMPTS,
   parseTxnDate, parseAmount, detectStatementHeader, parsePageWithPattern,
+  parseTransactionsFromPages,
 };

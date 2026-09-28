@@ -72,10 +72,30 @@ function makePdf(lines) {
   return Buffer.from(pdf, 'latin1');
 }
 
+/**
+ * Replace global.fetch with a fake OpenAI-compatible endpoint.
+ * handler(systemPrompt, userMessage) returns the object the model "answers", or an Error for a 500.
+ * Returns the array of recorded calls ({ sys, user, body }).
+ */
+function mockAi(handler) {
+  const calls = [];
+  global.fetch = jest.fn(async (url, init) => {
+    const body = JSON.parse(init.body);
+    const sys = body.messages[0].content;
+    const user = body.messages[1].content;
+    calls.push({ sys, user, body });
+    const out = handler(sys, user);
+    if (out instanceof Error) return { ok: false, status: 500, text: async () => out.message };
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(out) } }] }) };
+  });
+  return calls;
+}
+
 module.exports = {
   BANK_LINES, CARD_LINES,
   BANK_TEXT: BANK_LINES.join('\n'),
   CARD_TEXT: CARD_LINES.join('\n'),
   BANK_CSV, BANK_CSV_HEADER, BANK_CSV_ROWS, CARD_CSV,
   makePdf,
+  mockAi,
 };

@@ -262,3 +262,87 @@ describe('transactionParser – pattern parsing', () => {
     expect(page2.every((t) => t.confidence > 0.4)).toBe(true);
   });
 });
+
+// ─── PDF pages + AI passes ───────────────────────────────────────────────────
+
+describe('pdfExtractor – pages', () => {
+  const { extractPdfPages, extractPdfText } = require('../src/utils/pdfExtractor');
+
+  test('extractPdfPages keeps line breaks when asked; extractPdfText is unchanged', async () => {
+    const pdf = fx.makePdf(['LINE ONE 1.00', 'LINE TWO 2.00']);
+    const pages = await extractPdfPages(pdf, '', { preserveLines: true });
+    expect(pages).toHaveLength(1);
+    expect(pages[0]).toMatch(/LINE ONE 1\.00\nLINE TWO 2\.00/);
+    expect(await extractPdfText(pdf, '')).toMatch(/LINE ONE 1\.00 LINE TWO 2\.00/);
+  });
+});
+
+describe('transactionParser – AI passes', () => {
+  const tp = require('../src/utils/transactionParser');
+  const opts = { statementType: 'bank', apiKey: 'test-key' };
+  const aiTxn = (o = {}) => ({
+    date: '2026-08-03', description: 'UPI/SWIGGY', merchant: 'Swiggy', amount: 450, direction: 'debit',
+    kind: 'expense', category: 'Food & Dining', confidence: 0.9, ...o,
+  });
+  const ccRow = aiTxn({ date: '2026-08-05', description: 'CC PAYMENT XX1234', amount: 20000, kind: 'cc_payment', category: null });
+
+  test('runs extract → validate → review in order and returns the reviewed rows', async () => {
+    const calls = fx.mockAi((sys) => {
+      if (sys === tp.PROMPTS.extract('bank')) {
+        return { statement: { last4: '4821', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 50000, closing_balance: 124550 }, transactions: [aiTxn()] };
+      }
+      if (sys === tp.PROMPTS.validate) return { transactions: [aiTxn(), ccRow], validation_notes: ['Added missed CC payment'] };
+      if (sys === tp.PROMPTS.review) return { transactions: [aiTxn({ amount: 4500 }), ccRow], accuracy_notes: ['Fixed amount magnitude'] };
+      return new Error('unexpected prompt');
+    });
+    const r = await tp.parseTransactionsFromPages(['PAGE ONE TEXT'], opts);
+    expect(calls.map((c) => c.sys)).toEqual([tp.PROMPTS.extract('bank'), tp.PROMPTS.validate, tp.PROMPTS.review]);
+    expect(calls[0].body).toMatchObject({ model: 'gpt-4o-mini', temperature: 0 });
+    expect(r.method).toBe('ai');
+    expect(r.transactions.map((t) => t.amount)).toEqual([4500, 20000]);
+    expect(r.validation_notes).toEqual(['Page 1: Added missed CC payment', 'Page 1: Fixed amount magnitude']);
+    expect(r.statement).toMatchObject({ last4: '4821', closing_balance: 124550, period_end: '2026-08-31' });
+  });
+
+  test('rejects a validation pass that drops rows and skips review when there are no corrections', async () => {
+    const calls = fx.mockAi((sys) => (sys === tp.PROMPTS.extract('bank')
+      ? { statement: {}, transactions: [aiTxn(), aiTxn({ date: '2026-08-04' })] }
+      : { transactions: [aiTxn()], validation_notes: ['dropped one'] }));
+    const r = await tp.parseTransactionsFromPages(['TEXT'], opts);
+    expect(r.transactions).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  test('sends each page separately', async () => {
+    const calls = fx.mockAi((sys, user) => (sys === tp.PROMPTS.extract('bank')
+      ? { statement: {}, transactions: [aiTxn({ description: user })] }
+      : { transactions: [aiTxn({ description: 'x' })], validation_notes: [] }));
+    const r = await tp.parseTransactionsFromPages(['PAGE A', 'PAGE B'], opts);
+    expect(calls.filter((c) => c.sys === tp.PROMPTS.extract('bank')).map((c) => c.user)).toEqual(['PAGE A', 'PAGE B']);
+    expect(r.transactions).toHaveLength(2);
+  });
+
+  test('falls back to the pattern parser for a page when AI fails', async () => {
+    fx.mockAi(() => new Error('boom'));
+    const r = await tp.parseTransactionsFromPages([fx.BANK_TEXT], opts);
+    expect(r.method).toBe('pattern');
+    expect(r.transactions).toHaveLength(4);
+    expect(r.validation_notes[0]).toMatch(/^Page 1: AI parsing failed/);
+  });
+
+  test('drops AI rows without a usable date, amount or direction', async () => {
+    fx.mockAi((sys) => (sys === tp.PROMPTS.extract('bank')
+      ? { statement: {}, transactions: [aiTxn({ date: 'garbage' }), aiTxn({ amount: 0 }), aiTxn({ direction: 'sideways' }), aiTxn()] }
+      : { transactions: [aiTxn({ date: 'garbage' }), aiTxn({ amount: 0 }), aiTxn({ direction: 'sideways' }), aiTxn()], validation_notes: [] }));
+    const r = await tp.parseTransactionsFromPages(['TEXT'], opts);
+    expect(r.transactions).toHaveLength(1);
+  });
+
+  test('without an AI key the pattern parser is used and fetch is never called', async () => {
+    global.fetch = jest.fn();
+    const r = await tp.parseTransactionsFromPages([fx.BANK_TEXT], { statementType: 'bank' });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(r.method).toBe('pattern');
+    expect(r.statement).toMatchObject({ last4: '4821', opening_balance: 50000, closing_balance: 124550 });
+  });
+});

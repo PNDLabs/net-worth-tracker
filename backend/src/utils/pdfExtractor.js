@@ -16,9 +16,12 @@ async function getPdfjs() {
 /**
  * @param {Buffer} buffer      – raw PDF bytes
  * @param {string} [password]  – optional owner/user password
- * @returns {Promise<string>}  – concatenated text from all pages
+ * @param {{preserveLines?: boolean}} [options]
+ *        preserveLines – end each text line with "\n" (pdf.js hasEOL) instead of joining
+ *        every text item with a space. Transaction parsing needs the line structure.
+ * @returns {Promise<string[]>} – text of each page
  */
-async function extractPdfText(buffer, password) {
+async function extractPdfPages(buffer, password, { preserveLines = false } = {}) {
   const pdfjsLib = await getPdfjs();
 
   const loadingTask = pdfjsLib.getDocument({
@@ -48,11 +51,21 @@ async function extractPdfText(buffer, password) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items.map((item) => item.str).join(' ');
+    const pageText = preserveLines
+      ? content.items.map((item) => item.str + (item.hasEOL ? '\n' : ' ')).join('')
+      : content.items.map((item) => item.str).join(' ');
     pageTexts.push(pageText);
   }
-
-  return pageTexts.join('\n');
+  return pageTexts;
 }
 
-module.exports = { extractPdfText };
+/**
+ * @param {Buffer} buffer      – raw PDF bytes
+ * @param {string} [password]  – optional owner/user password
+ * @returns {Promise<string>}  – concatenated text from all pages
+ */
+async function extractPdfText(buffer, password) {
+  return (await extractPdfPages(buffer, password)).join('\n');
+}
+
+module.exports = { extractPdfText, extractPdfPages };
