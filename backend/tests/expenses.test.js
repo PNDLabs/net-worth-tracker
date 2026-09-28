@@ -94,3 +94,98 @@ describe('normalizeFamilyMember', () => {
     expect(normalizeFamilyMember('  jane   DOE ')).toBe('Jane Doe');
   });
 });
+
+// ─── Classifier ──────────────────────────────────────────────────────────────
+
+describe('transactionClassifier', () => {
+  const clf = require('../src/utils/transactionClassifier');
+  const base = { date: '2026-08-05', amount: 100, merchant: null, confidence: 0.95 };
+  const one = (txn, ctx) => clf.applyPostProcessing([{ ...base, ...txn }], ctx)[0];
+
+  test('merchantKey strips UPI references, VPA handles and digits', () => {
+    expect(clf.merchantKey('UPI/412345678901/SWIGGY/swiggy@icici/Payment')).toBe('SWIGGY SWIGGY PAYMENT');
+    expect(clf.merchantKey('UPI/998877665544/SWIGGY/swiggy@icici/Payment'))
+      .toBe(clf.merchantKey('UPI/412345678901/SWIGGY/swiggy@icici/Payment'));
+  });
+
+  test('mentionsLast4 needs a masked account/card prefix', () => {
+    expect(clf.mentionsLast4('CC PAYMENT XX1234 BILLDESK', '1234')).toBe(true);
+    expect(clf.mentionsLast4('IMPS TO A/C 1234', '1234')).toBe(true);
+    expect(clf.mentionsLast4('REF 99912345', '1234')).toBe(false);
+    expect(clf.mentionsLast4('CC PAYMENT XX1234', null)).toBe(false);
+  });
+
+  test('keywordClassify', () => {
+    expect(clf.keywordClassify('SALARY AUG ACME', 'credit', 'bank')).toMatchObject({ kind: 'income' });
+    expect(clf.keywordClassify('NACH/ZERODHA BROKING SIP', 'debit', 'bank')).toMatchObject({ kind: 'investment' });
+    expect(clf.keywordClassify('SWIGGY BANGALORE', 'debit', 'credit_card')).toMatchObject({ kind: 'expense', category: 'Food & Dining' });
+    expect(clf.keywordClassify('AMAZON REFUND', 'credit', 'credit_card')).toMatchObject({ kind: 'refund', category: 'Shopping' });
+    expect(clf.keywordClassify('SOMETHING ODD', 'debit', 'bank')).toEqual({ kind: 'expense', category: 'Other', confidence: 0.5 });
+    expect(clf.keywordClassify('NEFT FROM A FRIEND', 'credit', 'bank')).toEqual({ kind: 'income', category: null, confidence: 0.5 });
+  });
+
+  test('a bank card-payment debit is excluded even when the AI called it shopping', () => {
+    expect(one({ description: 'CC PAYMENT XX1234 BILLDESK', direction: 'debit', kind: 'expense', category: 'Shopping' }, { statementType: 'bank' }))
+      .toMatchObject({ kind: 'cc_payment', category: null, needs_review: false });
+  });
+
+  test('a bank debit naming a known card last4 is a card payment', () => {
+    expect(one({ description: 'NETBANKING TRF CARD NO XXXXXXXX9876', direction: 'debit', kind: 'expense', category: 'Other' },
+      { statementType: 'bank', knownCardLast4: ['9876'] })).toMatchObject({ kind: 'cc_payment' });
+  });
+
+  test('hard exclusion rules beat learned merchant rules', () => {
+    const rules = new Map([[clf.merchantKey('CC PAYMENT XX1234 BILLDESK'), { kind: 'expense', category: 'Shopping' }]]);
+    expect(one({ description: 'CC PAYMENT XX1234 BILLDESK', direction: 'debit', kind: 'expense' }, { statementType: 'bank', rules }))
+      .toMatchObject({ kind: 'cc_payment' });
+  });
+
+  test('a learned merchant rule overrides the parser and clears needs_review', () => {
+    const desc = 'UPI/111/RAMESH KUMAR/ramesh@okaxis/aug';
+    const rules = new Map([[clf.merchantKey(desc), { kind: 'expense', category: 'Rent' }]]);
+    expect(one({ description: desc, direction: 'debit', kind: 'expense', category: 'Other', confidence: 0.4 }, { statementType: 'bank', rules }))
+      .toMatchObject({ kind: 'expense', category: 'Rent', needs_review: false });
+  });
+
+  test('card statement: bill payment credit is excluded, other credits are refunds', () => {
+    expect(one({ description: 'PAYMENT RECEIVED - THANK YOU', direction: 'credit', kind: 'income' }, { statementType: 'credit_card' }))
+      .toMatchObject({ kind: 'cc_payment', category: null });
+    expect(one({ description: 'AMAZON REVERSAL', direction: 'credit', kind: 'income', category: 'Shopping' }, { statementType: 'credit_card' }))
+      .toMatchObject({ kind: 'refund', category: 'Shopping' });
+  });
+
+  test('a narration naming another own bank account is a transfer', () => {
+    expect(one({ description: 'IMPS TO A/C XX7777', direction: 'debit', kind: 'expense', category: 'Other' },
+      { statementType: 'bank', otherBankLast4: ['7777'] })).toMatchObject({ kind: 'transfer', category: null });
+  });
+
+  test('flags low confidence, "Other" and personal UPI payments for review', () => {
+    const ctx = { statementType: 'bank' };
+    expect(one({ description: 'AMAZON PAY', direction: 'debit', kind: 'expense', category: 'Shopping', confidence: 0.5 }, ctx).needs_review).toBe(true);
+    expect(one({ description: 'NEFT ACME', direction: 'debit', kind: 'expense', category: 'Other' }, ctx).needs_review).toBe(true);
+    expect(one({ description: 'UPI/555/SURESH/suresh@ybl/dinner', direction: 'debit', kind: 'expense', category: 'Food & Dining' }, ctx).needs_review).toBe(true);
+    expect(one({ description: 'SWIGGY', direction: 'debit', kind: 'expense', category: 'Food & Dining' }, ctx).needs_review).toBe(false);
+  });
+
+  test('an unknown parser kind falls back to keyword rules', () => {
+    expect(one({ description: 'ZOMATO ORDER', direction: 'debit', kind: 'shopping', category: null, confidence: null }, { statementType: 'bank' }))
+      .toMatchObject({ kind: 'expense', category: 'Food & Dining' });
+  });
+
+  test('computeDedupeKeys is stable and keeps identical rows apart', () => {
+    const t = { date: '2026-08-01', description: 'COFFEE DAY', amount: 100, direction: 'debit' };
+    const twice = clf.computeDedupeKeys([t, t], 'account', 1);
+    expect(twice[0].dedupe_key).not.toBe(twice[1].dedupe_key);
+    expect(clf.computeDedupeKeys([t], 'account', 1)[0].dedupe_key).toBe(twice[0].dedupe_key);
+    expect(clf.computeDedupeKeys([t], 'account', 2)[0].dedupe_key).not.toBe(twice[0].dedupe_key);
+  });
+
+  test('reconciliationNote', () => {
+    const txns = [{ direction: 'credit', amount: 100000 }, { direction: 'debit', amount: 25450 }];
+    expect(clf.reconciliationNote({ opening_balance: 50000, closing_balance: 124550 }, txns, 'bank')).toBeNull();
+    expect(clf.reconciliationNote({ opening_balance: 50000, closing_balance: 120000 }, txns, 'bank')).toMatch(/do not reconcile/);
+    expect(clf.reconciliationNote({ opening_balance: 20000, closing_balance: 12300 },
+      [{ direction: 'debit', amount: 13300 }, { direction: 'credit', amount: 21000 }], 'credit_card')).toBeNull();
+    expect(clf.reconciliationNote({ opening_balance: null, closing_balance: 1 }, txns, 'bank')).toBeNull();
+  });
+});
