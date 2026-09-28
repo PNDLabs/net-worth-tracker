@@ -23,7 +23,7 @@ const db = require('../db/database');
 const pdfExtractor = require('../utils/pdfExtractor');
 const { parseTransactionsFromPages, parseTransactionsFromCsv, parseTxnDate } = require('../utils/transactionParser');
 const {
-  KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, merchantKey, applyPostProcessing, computeDedupeKeys, reconciliationNote,
+  KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, NATURAL_DIRECTION, merchantKey, applyPostProcessing, computeDedupeKeys, reconciliationNote,
 } = require('../utils/transactionClassifier');
 const { normalizeFamilyMember } = require('../utils/familyMember');
 const { runMatcher } = require('../utils/transactionMatcher');
@@ -352,8 +352,11 @@ function loadTransactions(conn, { from, to }, member) {
   return rows.filter((r) => r.family_member === wanted);
 }
 
+/** Amount signed against the kind's natural direction, so a mislabelled row nets out instead of adding up. */
+const signedAmount = (r) => (NATURAL_DIRECTION[r.kind] === r.direction ? r.amount : -r.amount);
+
 function aggregate(rows) {
-  const sum = (kind) => rows.filter((r) => r.kind === kind).reduce((s, r) => s + r.amount, 0);
+  const sum = (kind) => rows.filter((r) => r.kind === kind).reduce((s, r) => s + signedAmount(r), 0);
   const income = sum('income');
   const refunds = sum('refund');
   const spending = sum('expense') - refunds;
@@ -393,7 +396,7 @@ router.get('/summary', (req, res) => {
   for (const r of rows) {
     if (r.kind !== 'expense') continue;
     const c = r.category || 'Other';
-    byCategory.set(c, (byCategory.get(c) || 0) + r.amount);
+    byCategory.set(c, (byCategory.get(c) || 0) + signedAmount(r));
   }
   // Money that left an account without counting as spending (the bank side of each pair).
   const excluded = rows.filter((r) => EXCLUDED_KINDS.includes(r.kind) && r.direction === 'debit');
@@ -404,6 +407,7 @@ router.get('/summary', (req, res) => {
     ...aggregate(rows),
     by_category: [...byCategory.entries()]
       .map(([category, amount]) => ({ category, amount: round2(amount) }))
+      .filter((c) => c.amount > 0)
       .sort((a, b) => b.amount - a.amount),
     excluded: {
       total: round2(excluded.reduce((s, r) => s + r.amount, 0)),

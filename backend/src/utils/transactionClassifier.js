@@ -8,6 +8,10 @@
 const crypto = require('crypto');
 
 const KINDS = ['expense', 'refund', 'income', 'investment', 'cc_payment', 'transfer'];
+// The direction each counted kind normally has; a row running the other way nets against it
+// (a debit marked income is income given back, a credit marked expense is money returned).
+const NATURAL_DIRECTION = { expense: 'debit', refund: 'credit', income: 'credit', investment: 'debit' };
+
 // Kinds that never count toward income, spending or investment totals.
 const EXCLUDED_KINDS = ['cc_payment', 'transfer'];
 const DEFAULT_CATEGORIES = [
@@ -102,7 +106,11 @@ function applyPostProcessing(txns, ctx) {
       ({ kind, category, confidence } = keywordClassify(t.description, t.direction, statementType));
     }
 
-    const rule = key ? rules.get(key) : null;
+    // A rule applies only when its kind fits this row's direction: "AMAZON = Groceries" learned
+    // from a purchase must not turn an Amazon refund into spending.
+    const learned = key ? rules.get(key) : null;
+    const rule = learned && (!NATURAL_DIRECTION[learned.kind] || NATURAL_DIRECTION[learned.kind] === t.direction)
+      ? learned : null;
     if (rule) ({ kind, category } = rule);
 
     // Hard exclusion rules: double counting must never depend on the AI or on a learned rule.
@@ -164,6 +172,6 @@ function reconciliationNote(statement, txns, statementType) {
 }
 
 module.exports = {
-  KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES,
+  KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, NATURAL_DIRECTION,
   merchantKey, mentionsLast4, keywordClassify, applyPostProcessing, computeDedupeKeys, reconciliationNote,
 };
