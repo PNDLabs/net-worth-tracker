@@ -12,6 +12,7 @@
 const express = require('express');
 const router  = express.Router();
 const db      = require('../db/database');
+const { KINDS, merchantKey, computeDedupeKeys } = require('../utils/transactionClassifier');
 
 const APP_VERSION           = '1.9.2';
 const EXPORT_SCHEMA_VERSION = 3;
@@ -45,6 +46,9 @@ router.get('/', (req, res) => {
         insurance_plans:  conn.prepare('SELECT * FROM insurance_plans ORDER BY id').all(),
         precious_metals:  conn.prepare('SELECT * FROM precious_metals ORDER BY id').all(),
         value_history:    conn.prepare('SELECT * FROM value_history ORDER BY id').all(),
+        expense_statements: conn.prepare('SELECT * FROM expense_statements ORDER BY id').all(),
+        transactions:     conn.prepare('SELECT * FROM transactions ORDER BY id').all(),
+        merchant_rules:   conn.prepare('SELECT * FROM merchant_rules ORDER BY id').all(),
         settings:         parseSettings(conn.prepare('SELECT key, value FROM settings').all()),
       },
     };
@@ -92,6 +96,9 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
     insurance_plans:  { imported: 0, skipped: 0 },
     precious_metals:  { imported: 0, skipped: 0 },
     value_history:    { imported: 0, skipped: 0 },
+    expense_statements: { imported: 0, skipped: 0 },
+    transactions:       { imported: 0, skipped: 0 },
+    merchant_rules:     { imported: 0, skipped: 0 },
     settings:         { imported: 0, skipped: 0 },
   };
 
@@ -340,6 +347,111 @@ router.post('/import', express.json({ limit: '50mb' }), (req, res) => {
         row.created_at || null
       );
       stats.value_history.imported++;
+    }
+
+    // ── 9. Expense statements, transactions and merchant rules ──────────────
+    const sourceIdMaps = { account: accountIdMap, liability: liabilityIdMap };
+    const statementIdMap = {};
+    const findStatement = conn.prepare(
+      `SELECT id FROM expense_statements
+        WHERE source_type = ? AND source_id = ?
+          AND coalesce(period_start,'') = coalesce(?,'') AND coalesce(period_end,'') = coalesce(?,'')
+          AND coalesce(file_name,'') = coalesce(?,'')`
+    );
+    const insertStatement = conn.prepare(
+      `INSERT INTO expense_statements
+         (source_type, source_id, statement_type, file_name, last4, period_start, period_end,
+          opening_balance, closing_balance, parse_method, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`
+    );
+    for (const row of (data.expense_statements || [])) {
+      const newSourceId = sourceIdMaps[row.source_type] && sourceIdMaps[row.source_type][row.source_id];
+      if (!newSourceId) { stats.expense_statements.skipped++; continue; }
+      const existing = findStatement.get(row.source_type, newSourceId,
+        row.period_start || null, row.period_end || null, row.file_name || null);
+      if (existing) {
+        statementIdMap[row.id] = existing.id;
+        stats.expense_statements.skipped++;
+        continue;
+      }
+      const result = insertStatement.run(
+        row.source_type, newSourceId, row.statement_type === 'credit_card' ? 'credit_card' : 'bank',
+        row.file_name || null, row.last4 || null, row.period_start || null, row.period_end || null,
+        row.opening_balance != null ? Number(row.opening_balance) : null,
+        row.closing_balance != null ? Number(row.closing_balance) : null,
+        row.parse_method || null, row.created_at || null
+      );
+      statementIdMap[row.id] = result.lastInsertRowid;
+      stats.expense_statements.imported++;
+    }
+
+    const txnIdMap = {};
+    const insertTxn = conn.prepare(
+      `INSERT OR IGNORE INTO transactions
+         (statement_id, source_type, source_id, txn_date, description, merchant, merchant_key, amount,
+          direction, kind, category, needs_review, kind_locked, dedupe_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))`
+    );
+    const findTxnByKey = conn.prepare('SELECT id FROM transactions WHERE dedupe_key = ?');
+    const getStatement = conn.prepare('SELECT source_type, source_id FROM expense_statements WHERE id = ?');
+    const txnsByStatement = new Map();
+    for (const row of (data.transactions || [])) {
+      if (!txnsByStatement.has(row.statement_id)) txnsByStatement.set(row.statement_id, []);
+      txnsByStatement.get(row.statement_id).push(row);
+    }
+    for (const [oldStatementId, rows] of txnsByStatement) {
+      const newStatementId = statementIdMap[oldStatementId];
+      if (!newStatementId) { stats.transactions.skipped += rows.length; continue; }
+      const target = getStatement.get(newStatementId);
+      rows.sort((a, b) => a.id - b.id);
+      // Dedupe keys embed the source id: keep them when the source kept its id,
+      // otherwise recompute them for the new id.
+      const recomputed = computeDedupeKeys(
+        rows.map((r) => ({ ...r, date: r.txn_date, merchant_key: r.merchant_key || merchantKey(r.description) })),
+        target.source_type, target.source_id
+      );
+      recomputed.forEach((r, i) => {
+        const original = rows[i];
+        if (!KINDS.includes(original.kind) || !original.txn_date || !(Number(original.amount) > 0)) {
+          stats.transactions.skipped++;
+          return;
+        }
+        const sameSource = original.source_type === target.source_type && original.source_id === target.source_id;
+        const dedupeKey = sameSource && original.dedupe_key ? original.dedupe_key : r.dedupe_key;
+        const result = insertTxn.run(
+          newStatementId, target.source_type, target.source_id, original.txn_date, String(original.description || ''),
+          original.merchant || null, r.merchant_key, Number(original.amount), original.direction === 'credit' ? 'credit' : 'debit',
+          original.kind, original.category || null, original.needs_review ? 1 : 0, original.kind_locked ? 1 : 0,
+          dedupeKey, original.created_at || null, original.updated_at || null
+        );
+        if (result.changes) {
+          txnIdMap[original.id] = result.lastInsertRowid;
+          stats.transactions.imported++;
+        } else {
+          const existing = findTxnByKey.get(dedupeKey);
+          if (existing) txnIdMap[original.id] = existing.id;
+          stats.transactions.skipped++;
+        }
+      });
+    }
+    const setMatch = conn.prepare('UPDATE transactions SET matched_txn_id = ? WHERE id = ? AND matched_txn_id IS NULL');
+    for (const row of (data.transactions || [])) {
+      if (!row.matched_txn_id) continue;
+      const self = txnIdMap[row.id];
+      const partner = txnIdMap[row.matched_txn_id];
+      if (self && partner) setMatch.run(partner, self);
+    }
+
+    const insertRule = conn.prepare(
+      `INSERT OR IGNORE INTO merchant_rules (merchant_key, kind, category, created_at, updated_at)
+       VALUES (?, ?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))`
+    );
+    for (const row of (data.merchant_rules || [])) {
+      if (!row.merchant_key || !KINDS.includes(row.kind)) { stats.merchant_rules.skipped++; continue; }
+      const result = insertRule.run(String(row.merchant_key), row.kind, row.category || null,
+        row.created_at || null, row.updated_at || null);
+      if (result.changes) stats.merchant_rules.imported++;
+      else stats.merchant_rules.skipped++;
     }
   });
 

@@ -818,3 +818,68 @@ describe('Expenses API – reporting and editing', () => {
     expect(cats.filter((c) => c === 'Rent')).toHaveLength(1);
   });
 });
+
+// ─── Export / import ─────────────────────────────────────────────────────────
+
+describe('Export / import of expense data', () => {
+  function seed(db) {
+    const acct = Number(db.prepare("INSERT INTO accounts (name, institution, type, balance, created_at, updated_at) VALUES ('HDFC Savings', 'HDFC', 'savings', 0, datetime('now'), datetime('now'))").run().lastInsertRowid);
+    const card = Number(db.prepare("INSERT INTO liabilities (name, lender, type, current_balance, created_at, updated_at) VALUES ('Regalia', 'HDFC', 'credit_card', 0, datetime('now'), datetime('now'))").run().lastInsertRowid);
+    const bankStmt = insertStatement(db, { source_type: 'account', source_id: acct, statement_type: 'bank', period_start: '2026-08-01', period_end: '2026-08-31' });
+    const cardStmt = insertStatement(db, { source_type: 'liability', source_id: card, statement_type: 'credit_card', period_start: '2026-08-01', period_end: '2026-08-31' });
+    const d = insertTxn(db, bankStmt, { date: '2026-08-05', description: 'CC PAYMENT XX1234', amount: 20000, direction: 'debit', kind: 'cc_payment' });
+    const c = insertTxn(db, cardStmt, { date: '2026-08-06', description: 'PAYMENT RECEIVED', amount: 20000, direction: 'credit', kind: 'cc_payment', matched_txn_id: d });
+    db.prepare('UPDATE transactions SET matched_txn_id = ? WHERE id = ?').run(c, d);
+    insertTxn(db, bankStmt, { date: '2026-08-07', description: 'SWIGGY', amount: 450, direction: 'debit', kind: 'expense', category: 'Food & Dining' });
+    db.prepare("INSERT INTO merchant_rules (merchant_key, kind, category) VALUES ('SWIGGY', 'expense', 'Food & Dining')").run();
+  }
+
+  test('exports the expense tables', async () => {
+    seed(testDb);
+    const res = await request(app).get('/api/export');
+    expect(res.body.schema_version).toBe(3);
+    expect(res.body.data.expense_statements).toHaveLength(2);
+    expect(res.body.data.transactions).toHaveLength(3);
+    expect(res.body.data.merchant_rules).toHaveLength(1);
+  });
+
+  test('round-trips into an empty database with IDs remapped and pairs kept', async () => {
+    seed(testDb);
+    // Shift IDs in the target DB so a missing remap would be caught.
+    const target = dbModule.createDatabase(':memory:');
+    target.prepare("INSERT INTO accounts (name, type, balance) VALUES ('Other', 'savings', 0)").run();
+    target.prepare("INSERT INTO liabilities (name, type, current_balance) VALUES ('Other Loan', 'auto', 0)").run();
+    const payload = (await request(app).get('/api/export')).body;
+
+    dbModule.getDb.mockReturnValue(target);
+    const res = await request(app).post('/api/export/import').send(payload);
+    expect(res.status).toBe(200);
+    expect(res.body.stats).toMatchObject({
+      expense_statements: { imported: 2, skipped: 0 },
+      transactions: { imported: 3, skipped: 0 },
+      merchant_rules: { imported: 1, skipped: 0 },
+    });
+    const rows = target.prepare(
+      `SELECT t.kind, t.matched_txn_id, t.source_id, COALESCE(a.name, l.name) AS source
+         FROM transactions t
+         LEFT JOIN accounts a ON t.source_type = 'account' AND a.id = t.source_id
+         LEFT JOIN liabilities l ON t.source_type = 'liability' AND l.id = t.source_id`
+    ).all();
+    expect(rows.map((r) => r.source).sort()).toEqual(['HDFC Savings', 'HDFC Savings', 'Regalia']);
+    const pays = rows.filter((r) => r.kind === 'cc_payment');
+    expect(pays.every((r) => r.matched_txn_id)).toBe(true);
+    target.close();
+  });
+
+  test('importing the same export twice does not duplicate anything', async () => {
+    seed(testDb);
+    const payload = (await request(app).get('/api/export')).body;
+    const res = await request(app).post('/api/export/import').send(payload);
+    expect(res.body.stats).toMatchObject({
+      expense_statements: { imported: 0, skipped: 2 },
+      transactions: { imported: 0, skipped: 3 },
+      merchant_rules: { imported: 0, skipped: 1 },
+    });
+    expect(testDb.prepare('SELECT COUNT(*) AS n FROM transactions').get().n).toBe(3);
+  });
+});
