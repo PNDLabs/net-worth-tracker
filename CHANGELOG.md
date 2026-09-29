@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.10.0] – 2026-09-28
+
+### Added
+- **Expenses module** (web) — upload bank and credit card statements (PDF, including password-protected, or CSV) and track monthly income, spending by category, investments and savings rate.
+  - Parsing follows the existing import pipeline: AI three-pass extraction per PDF page (extract → validate → accuracy review) with a pattern-based fallback; CSV columns mapped by AI with a header-alias fallback. Numeric dates are read day-first.
+  - Every transaction gets a kind (expense, refund, income, investment, card payment, own transfer) and a category. Corrections can be remembered per merchant.
+  - **No double counting:** credit card bill payments in bank statements and transfers between your own accounts are excluded from all totals by fixed rules. They are paired with the card's "payment received" line (same amount ±₹1, within 5 days) or the other account's credit (within 3 days), whichever statement is uploaded first.
+  - Review screen before saving, with duplicate detection across re-uploads and overlapping statements, a reconciliation warning when totals don't add up, and an optional update of the linked account/card balance (never overwriting a newer balance without confirmation).
+  - Overview with KPIs, category chart, 12-month trend, savings-rate chart, table view, and the month's net worth change from snapshots.
+  - Full data export/import includes expense statements, transactions and merchant rules (export schema unchanged at v3).
+- **DB schema v9**: new tables `expense_statements`, `transactions`, `merchant_rules`.
+
+---
+
 ## [1.9.2] – 2026-05-05
 
 ### Fixed

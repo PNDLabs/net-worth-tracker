@@ -12,6 +12,25 @@ export async function apiFetch(path, options = {}) {
   return res.json();
 }
 
+/** Build a query string, dropping empty values. */
+function qs(params = {}) {
+  return new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  ).toString();
+}
+
+/** Like apiFetch, but keeps the server's error `code` (PASSWORD_REQUIRED, STALE_BALANCE). */
+async function fetchWithCode(path, options) {
+  const res = await fetch(`${API_BASE}${path}`, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || `Request failed: ${res.status}`);
+    err.code = body.code;
+    throw err;
+  }
+  return res.json();
+}
+
 export const api = {
   // Accounts
   getAccounts: () => apiFetch('/accounts'),
@@ -147,4 +166,28 @@ export const api = {
 
   importFullData: (payload) =>
     apiFetch('/export/import', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Expenses
+  previewExpenseStatement: (file, { sourceType, sourceId, password }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('source_type', sourceType);
+    formData.append('source_id', String(sourceId));
+    if (password) formData.append('password', password);
+    return fetchWithCode('/expenses/preview', { method: 'POST', body: formData });
+  },
+  commitExpenseStatement: (payload) => fetchWithCode('/expenses/commit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
+  getExpenseSummary: (month, member) => apiFetch(`/expenses/summary?${qs({ month, member })}`),
+  getExpenseTrend: (months, member, end) => apiFetch(`/expenses/trend?${qs({ months, member, end })}`),
+  getExpenseTransactions: (filters) => apiFetch(`/expenses/transactions?${qs(filters)}`),
+  updateExpenseTransaction: (id, data) => apiFetch(`/expenses/transactions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getExpenseStatements: () => apiFetch('/expenses/statements'),
+  deleteExpenseStatement: (id) => apiFetch(`/expenses/statements/${id}`, { method: 'DELETE' }),
+  getExpenseCategories: () => apiFetch('/expenses/categories'),
+  getMerchantRules: () => apiFetch('/expenses/rules'),
+  deleteMerchantRule: (id) => apiFetch(`/expenses/rules/${id}`, { method: 'DELETE' }),
 };

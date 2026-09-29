@@ -547,3 +547,19 @@ tr:hover td { background: var(--color-surface-2); }
   .accounts-table tr.expand-row { display: block; }
   .accounts-table tr.expand-row td { display: block; }
 }
+
+/* ─── Expenses ───────────────────────────────────────────────────────────── */
+.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); margin-bottom: 20px; overflow-x: auto; }
+.tab-btn { background: transparent; color: var(--color-text-muted); border-radius: 0; padding: 8px 16px; border-bottom: 2px solid transparent; font-weight: 600; white-space: nowrap; }
+.tab-btn:hover { color: var(--color-text); }
+.tab-btn.active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+.badge-review    { background: #fff4e5; color: #8a4b00; }
+.badge-excluded  { background: #eceff1; color: #37474f; }
+.badge-duplicate { background: #f3f4f6; color: #6a737d; }
+.row-duplicate td { opacity: .5; }
+.row-review td:first-child { box-shadow: inset 3px 0 0 var(--color-warning); }
+.muted-note { font-size: 13px; color: var(--color-text-muted); }
+.filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+.filter-row .form-group { min-width: 150px; }
+.stat-hint { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; }
+.cell-select { min-width: 130px; font-size: 12px; padding: 4px 6px; }

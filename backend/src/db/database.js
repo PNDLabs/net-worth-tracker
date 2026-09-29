@@ -25,8 +25,10 @@ const DB_PATH = process.env.DB_PATH || path.join(DB_DIR, 'networth.db');
  *       policies such as ULIPs) and linked_account_id (FK to accounts for the
  *       auto-created brokerage account that tracks the fund value in net worth)
  *   8 – accounts/assets/liabilities: added family_member for family net worth
+ *   9 – expense module: expense_statements, transactions (with dedupe_key,
+ *       kind, matched_txn_id pairing, kind_locked) and merchant_rules
  */
-const DB_SCHEMA_VERSION = 8;
+const DB_SCHEMA_VERSION = 9;
 
 function createDatabase(dbPath) {
   if (dbPath !== ':memory:') {
@@ -161,6 +163,55 @@ function runMigrations(db) {
 
     CREATE INDEX IF NOT EXISTS idx_precious_metals_type
       ON precious_metals(metal_type);
+
+    CREATE TABLE IF NOT EXISTS expense_statements (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_type     TEXT    NOT NULL,
+      source_id       INTEGER NOT NULL,
+      statement_type  TEXT    NOT NULL,
+      file_name       TEXT,
+      last4           TEXT,
+      period_start    TEXT,
+      period_end      TEXT,
+      opening_balance REAL,
+      closing_balance REAL,
+      parse_method    TEXT,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      statement_id   INTEGER NOT NULL REFERENCES expense_statements(id) ON DELETE CASCADE,
+      source_type    TEXT    NOT NULL,
+      source_id      INTEGER NOT NULL,
+      txn_date       TEXT    NOT NULL,
+      description    TEXT    NOT NULL,
+      merchant       TEXT,
+      merchant_key   TEXT,
+      amount         REAL    NOT NULL,
+      direction      TEXT    NOT NULL,
+      kind           TEXT    NOT NULL,
+      category       TEXT,
+      matched_txn_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+      needs_review   INTEGER NOT NULL DEFAULT 0,
+      kind_locked    INTEGER NOT NULL DEFAULT 0,
+      dedupe_key     TEXT    NOT NULL UNIQUE,
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_transactions_date     ON transactions(txn_date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_source   ON transactions(source_type, source_id, txn_date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_key);
+
+    CREATE TABLE IF NOT EXISTS merchant_rules (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      merchant_key TEXT    NOT NULL UNIQUE,
+      kind         TEXT    NOT NULL,
+      category     TEXT,
+      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // ── Incremental migrations ──────────────────────────────────────────────────

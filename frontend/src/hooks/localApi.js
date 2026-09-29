@@ -22,6 +22,8 @@ import * as exportSvc   from '../db/exportService';
 import { getAiSettings, isAiEnabled, saveAiSettings } from './aiSettings';
 import { parseStatement } from './statementParser';
 
+const expensesUnavailable = () => Promise.reject(new Error('Expenses is available in the web version'));
+
 export const api = {
   // ─── Accounts ───────────────────────────────────────────────────────────────
   getAccounts: () => accountsSvc.getAccounts(),
@@ -169,4 +171,17 @@ export const api = {
   // Export / import full data
   exportData: () => exportSvc.exportAllData(),
   importFullData: (payload) => exportSvc.importAllData(payload),
+
+  // ─── Expenses (web only: needs the REST backend's statement parser) ─────
+  previewExpenseStatement: expensesUnavailable,
+  commitExpenseStatement: expensesUnavailable,
+  getExpenseSummary: expensesUnavailable,
+  getExpenseTrend: expensesUnavailable,
+  getExpenseTransactions: expensesUnavailable,
+  updateExpenseTransaction: expensesUnavailable,
+  getExpenseStatements: expensesUnavailable,
+  deleteExpenseStatement: expensesUnavailable,
+  getExpenseCategories: expensesUnavailable,
+  getMerchantRules: expensesUnavailable,
+  deleteMerchantRule: expensesUnavailable,
 };

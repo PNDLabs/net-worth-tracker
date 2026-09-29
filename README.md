@@ -9,6 +9,7 @@ A full-stack web application to track your personal net worth across all financi
 - 🏦 **Accounts** — bank accounts (checking, savings, CDs) and investment accounts (brokerage, 401k, IRA, Roth IRA) with individual holdings
 - 🏠 **Assets** — real estate, vehicles, crypto, collectibles, business interests
 - 💳 **Liabilities** — mortgage, auto loans, student loans, credit cards, HELOCs
+- 💸 **Expenses** — upload bank & credit card statements (PDF/CSV); transactions are classified into categories, investments and income, and credit card bill payments are never double counted
 - 📈 **History** — time-series snapshots with a line chart
 - 📥 **Import** — bulk import via PDF, CSV or JSON for bank/investment statements
 
@@ -163,6 +164,14 @@ net-worth-tracker/
 | POST | `/api/networth/snapshots` | Record a snapshot |
 | POST | `/api/import/csv?import_type=<type>` | Import CSV file |
 | POST | `/api/import/json` | Import JSON records |
+| POST | `/api/expenses/preview` | Parse a bank/card statement (nothing saved) |
+| POST | `/api/expenses/commit` | Save reviewed transactions |
+| GET | `/api/expenses/summary?month=YYYY-MM` | Monthly income, spending, invested, savings rate |
+| GET | `/api/expenses/trend?months=12` | Monthly series |
+| GET | `/api/expenses/transactions` | List transactions (filters: month, kind, category, member, needs_review) |
+| PUT | `/api/expenses/transactions/:id` | Change kind/category (optionally remember for the merchant) |
+| GET / DELETE | `/api/expenses/statements[/:id]` | List / undo uploaded statements |
+| GET / DELETE | `/api/expenses/rules[/:id]` | List / forget learned merchant rules |
 
 ## Running Tests
 
@@ -171,7 +180,7 @@ cd backend
 npm test
 ```
 
-All 35 tests should pass covering Accounts, Holdings, Assets, Liabilities, Net Worth calculation, Snapshots, CSV/JSON import, and the health endpoint.
+All tests should pass (218 at v1.10.0), covering accounts, holdings, assets, liabilities, insurance, metals, net worth, snapshots, imports, export, and the expenses module.
 
 ## CSV Import Format
 

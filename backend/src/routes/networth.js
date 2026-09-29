@@ -1,23 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/database');
+const { DEFAULT_FAMILY_MEMBER, normalizeFamilyMember: normalizedMemberName } = require('../utils/familyMember');
 
 // Account types that are purely cash/deposit (no investment component).
 // Investment account types: money_market, brokerage, 401k, ira, roth_ira, pension, other
 const CASH_ACCOUNT_TYPES = ['checking', 'savings', 'cd'];
-const DEFAULT_FAMILY_MEMBER = 'Self';
-
-function normalizedMemberName(name) {
-  if (typeof name !== 'string') return DEFAULT_FAMILY_MEMBER;
-  const normalized = name.trim().replace(/\s+/g, ' ');
-  if (!normalized) return DEFAULT_FAMILY_MEMBER;
-  const lower = normalized.toLowerCase();
-  if (lower === 'self' || lower === 'you') return DEFAULT_FAMILY_MEMBER;
-  return normalized
-    .split(' ')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ');
-}
 
 function calcNetWorth(conn) {
   const cashPlaceholders = CASH_ACCOUNT_TYPES.map(() => '?').join(',');
