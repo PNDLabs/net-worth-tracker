@@ -3,14 +3,66 @@
  * they are never counted as spending. Runs on every commit (inside the caller's DB
  * transaction), so the order in which bank and card statements are uploaded does not matter.
  */
-const { mentionsLast4 } = require('./transactionClassifier');
+const { mentionsLast4, merchantKey } = require('./transactionClassifier');
 
 const AMOUNT_TOLERANCE = 1;   // ₹1 rounding slack
 const CARD_PAYMENT_DAYS = 5;  // bank debit → card credit posting lag
 const TRANSFER_DAYS = 3;
+const REFUND_LOOKBACK_DAYS = 90; // a refund's purchase is on the same account within this many days before it
+// Words a refund narration adds to the original purchase's narration.
+const REFUND_WORDS_RE = /\b(REFUND|REFUNDED|REVERSAL|REVERSED|REV|CASHBACK|RETURN)\b/gi;
 
 const dayDiff = (a, b) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
 const amountEq = (a, b) => Math.abs(a - b) <= AMOUNT_TOLERANCE;
+
+function shiftDate(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Give each refund in the window the category of the purchase it reverses, so the refund
+ * cancels that purchase in the category totals. The purchase is on the same account/card,
+ * up to REFUND_LOOKBACK_DAYS before the refund: preferably the same merchant (ignoring
+ * REFUND/REVERSAL words) with an amount at least the refund's, otherwise the exact amount.
+ * Refunds the user edited (kind_locked) are left alone.
+ * @returns {number} refunds whose category was set
+ */
+function attributeRefunds(conn, { from, to }) {
+  const refunds = conn.prepare(
+    `SELECT * FROM transactions WHERE kind = 'refund' AND kind_locked = 0 AND txn_date BETWEEN ? AND ?`
+  ).all(from, to);
+  const purchasesFor = conn.prepare(
+    `SELECT * FROM transactions
+      WHERE kind = 'expense' AND direction = 'debit' AND category IS NOT NULL
+        AND source_type = ? AND source_id = ? AND txn_date BETWEEN ? AND ?`
+  );
+  const setCategory = conn.prepare(
+    `UPDATE transactions SET category = ?, needs_review = CASE WHEN ? = 1 THEN 0 ELSE needs_review END,
+            updated_at = datetime('now') WHERE id = ?`
+  );
+  let attributed = 0;
+  for (const refund of refunds) {
+    const candidates = purchasesFor.all(refund.source_type, refund.source_id,
+      shiftDate(refund.txn_date, -REFUND_LOOKBACK_DAYS), refund.txn_date);
+    const key = merchantKey(refund.description.replace(REFUND_WORDS_RE, ' '));
+    const sameMerchant = candidates.filter((c) => key &&
+      (c.merchant_key || merchantKey(c.description)) === key && c.amount >= refund.amount - AMOUNT_TOLERANCE);
+    const pool = sameMerchant.length ? sameMerchant : candidates.filter((c) => amountEq(c.amount, refund.amount));
+    if (pool.length === 0) continue;
+    pool.sort((a, b) =>
+      (amountEq(a.amount, refund.amount) ? 0 : 1) - (amountEq(b.amount, refund.amount) ? 0 : 1) ||
+      dayDiff(a.txn_date, refund.txn_date) - dayDiff(b.txn_date, refund.txn_date));
+    const purchase = pool[0];
+    // A same-merchant match explains the refund, so it no longer needs a look.
+    const explained = sameMerchant.length > 0;
+    if (purchase.category === refund.category && !(explained && refund.needs_review)) continue;
+    setCategory.run(purchase.category, explained ? 1 : 0, refund.id);
+    attributed++;
+  }
+  return attributed;
+}
 
 /**
  * @param {import('better-sqlite3').Database} conn
@@ -37,7 +89,7 @@ function runMatcher(conn, { from, to }) {
     used.add(a.id);
     used.add(b.id);
   };
-  const result = { card_payments: 0, promoted: 0, transfers: 0 };
+  const result = { card_payments: 0, promoted: 0, transfers: 0, refunds: 0 };
 
   const bankDebits = rows.filter((r) => r.statement_type === 'bank' && r.direction === 'debit');
   const bankCredits = rows.filter((r) => r.statement_type === 'bank' && r.direction === 'credit');
@@ -88,7 +140,8 @@ function runMatcher(conn, { from, to }) {
     result.transfers++;
   }
 
+  result.refunds = attributeRefunds(conn, { from, to });
   return result;
 }
 
-module.exports = { runMatcher, CARD_PAYMENT_DAYS, TRANSFER_DAYS };
+module.exports = { runMatcher, attributeRefunds, CARD_PAYMENT_DAYS, TRANSFER_DAYS };

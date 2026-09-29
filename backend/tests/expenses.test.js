@@ -436,7 +436,7 @@ describe('transactionMatcher', () => {
   test('pairs a bank card-payment debit with the card payment credit', () => {
     const d = bankPayment('2026-08-05');
     const c = cardPayment('2026-08-06');
-    expect(runMatcher(testDb, W)).toEqual({ card_payments: 1, promoted: 0, transfers: 0 });
+    expect(runMatcher(testDb, W)).toEqual({ card_payments: 1, promoted: 0, transfers: 0, refunds: 0 });
     expect(get(d).matched_txn_id).toBe(c);
     expect(get(c).matched_txn_id).toBe(d);
   });
@@ -628,7 +628,7 @@ describe('Expenses API – preview & commit', () => {
 
     const bank = (await preview(bankCsv(), 'aug.csv', { source_type: 'account', source_id: accountId })).body;
     const res = await commitFrom(bank, 'account', accountId);
-    expect(res.body.matches).toEqual({ card_payments: 1, promoted: 0, transfers: 0 });
+    expect(res.body.matches).toEqual({ card_payments: 1, promoted: 0, transfers: 0, refunds: 0 });
     const payments = testDb.prepare("SELECT matched_txn_id FROM transactions WHERE kind = 'cc_payment'").all();
     expect(payments).toHaveLength(2);
     expect(payments.every((r) => r.matched_txn_id)).toBe(true);
@@ -716,7 +716,7 @@ describe('Expenses API – reporting and editing', () => {
     });
     expect(res.body.by_category).toEqual([
       { category: 'Rent', amount: 20000 },
-      { category: 'Food & Dining', amount: 5000 },
+      { category: 'Food & Dining', amount: 4000 }, // 5,000 less the 1,000 Food & Dining refund
       { category: 'Shopping', amount: 4000 },
     ]);
   });
@@ -1102,5 +1102,73 @@ describe('Statement noise is ignored', () => {
     expect(res.body.transactions.map((t) => [t.date, t.kind, t.amount])).toEqual([
       ['2026-08-02', 'expense', 800], ['2026-08-06', 'cc_payment', 20000], ['2026-08-12', 'refund', 1000],
     ]);
+  });
+});
+
+// ─── Refunds cancel their purchase ───────────────────────────────────────────
+
+describe('Refunds cancel their purchase', () => {
+  const { runMatcher } = require('../src/utils/transactionMatcher');
+  const W = { from: '2026-06-01', to: '2026-09-30' };
+  const get = (id) => testDb.prepare('SELECT category, needs_review FROM transactions WHERE id = ?').get(id);
+  let card;
+  beforeEach(() => {
+    card = insertStatement(testDb, { source_type: 'liability', source_id: 1, statement_type: 'credit_card' });
+  });
+
+  test('a refund takes the category of its purchase from the same merchant', () => {
+    insertTxn(testDb, card, { date: '2026-09-05', description: 'PAY*MAKEMYTRIP COM,GURGAON', amount: 5467, direction: 'debit', kind: 'expense', category: 'Travel' });
+    const refund = insertTxn(testDb, card, { date: '2026-09-09', description: 'PAY*MAKEMYTRIP COM,GURGAON', amount: 5467, direction: 'credit', kind: 'refund', needs_review: 1 });
+    expect(runMatcher(testDb, W).refunds).toBe(1);
+    expect(get(refund)).toEqual({ category: 'Travel', needs_review: 0 });
+  });
+
+  test('a reversal is matched to the purchase its narration repeats', () => {
+    const bank = insertStatement(testDb, { source_type: 'account', source_id: 1, statement_type: 'bank' });
+    insertTxn(testDb, bank, { date: '2026-09-04', description: 'MB/BANGALOREE/1788485518CB/040926', amount: 2206, direction: 'debit', kind: 'expense', category: 'Rent' });
+    insertTxn(testDb, bank, { date: '2026-09-04', description: 'MB/BANGALOREE/1788485419KA/040926', amount: 2206, direction: 'debit', kind: 'expense', category: 'Utilities & Bills' });
+    const rev = insertTxn(testDb, bank, { date: '2026-09-04', description: 'REVERSAL - MB/BANGALOREE/1788485419KA/040926', amount: 2206, direction: 'credit', kind: 'refund' });
+    runMatcher(testDb, W);
+    expect(get(rev).category).toBe('Utilities & Bills');
+  });
+
+  test('a partial refund matches a larger purchase from the same merchant', () => {
+    insertTxn(testDb, card, { date: '2026-08-16', description: 'AMAZON PAY IN GROCERY BANGALORE IN', amount: 932, direction: 'debit', kind: 'expense', category: 'Groceries' });
+    const refund = insertTxn(testDb, card, { date: '2026-08-18', description: 'AMAZON PAY IN GROCERY BANGALORE IN', amount: 119, direction: 'credit', kind: 'refund', category: 'Other' });
+    runMatcher(testDb, W);
+    expect(get(refund).category).toBe('Groceries');
+  });
+
+  test('falls back to an exact amount on the same card, but never another card or a purchase over 90 days old', () => {
+    const other = insertStatement(testDb, { source_type: 'liability', source_id: 2, statement_type: 'credit_card' });
+    insertTxn(testDb, other, { date: '2026-09-01', description: 'HOTEL TAJ', amount: 8000, direction: 'debit', kind: 'expense', category: 'Travel' });
+    insertTxn(testDb, card, { date: '2026-05-01', description: 'OLD SHOP', amount: 700, direction: 'debit', kind: 'expense', category: 'Shopping' });
+    insertTxn(testDb, card, { date: '2026-09-02', description: 'CROMA STORE', amount: 450, direction: 'debit', kind: 'expense', category: 'Shopping' });
+    const byAmount = insertTxn(testDb, card, { date: '2026-09-06', description: 'MERCHANT CREDIT 88', amount: 450, direction: 'credit', kind: 'refund' });
+    const otherCard = insertTxn(testDb, card, { date: '2026-09-06', description: 'HOTEL TAJ', amount: 8000, direction: 'credit', kind: 'refund' });
+    const tooOld = insertTxn(testDb, card, { date: '2026-09-06', description: 'OLD SHOP', amount: 700, direction: 'credit', kind: 'refund' });
+    runMatcher(testDb, { from: '2026-04-01', to: '2026-09-30' });
+    expect(get(byAmount).category).toBe('Shopping');
+    expect(get(otherCard).category).toBeNull();
+    expect(get(tooOld).category).toBeNull();
+  });
+
+  test('a refund the user edited is left alone', () => {
+    insertTxn(testDb, card, { date: '2026-09-05', description: 'MAKEMYTRIP', amount: 5467, direction: 'debit', kind: 'expense', category: 'Travel' });
+    const refund = insertTxn(testDb, card, { date: '2026-09-09', description: 'MAKEMYTRIP', amount: 5467, direction: 'credit', kind: 'refund', category: 'Entertainment', kind_locked: 1 });
+    runMatcher(testDb, W);
+    expect(get(refund).category).toBe('Entertainment');
+  });
+
+  test('refunds are subtracted from their category; a fully refunded purchase leaves the chart', async () => {
+    const acct = Number(testDb.prepare("INSERT INTO liabilities (name, type, current_balance) VALUES ('Card', 'credit_card', 0)").run().lastInsertRowid);
+    const s = insertStatement(testDb, { source_type: 'liability', source_id: acct, statement_type: 'credit_card' });
+    insertTxn(testDb, s, { date: '2026-09-05', amount: 5467, direction: 'debit', kind: 'expense', category: 'Travel' });
+    insertTxn(testDb, s, { date: '2026-09-09', amount: 5467, direction: 'credit', kind: 'refund', category: 'Travel' });
+    insertTxn(testDb, s, { date: '2026-09-10', amount: 932, direction: 'debit', kind: 'expense', category: 'Groceries' });
+    insertTxn(testDb, s, { date: '2026-09-11', amount: 119, direction: 'credit', kind: 'refund', category: 'Groceries' });
+    const res = await request(app).get('/api/expenses/summary?month=2026-09');
+    expect(res.body.by_category).toEqual([{ category: 'Groceries', amount: 813 }]);
+    expect(res.body.spending).toBe(813);
   });
 });

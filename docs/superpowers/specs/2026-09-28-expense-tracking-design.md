@@ -307,7 +307,14 @@ shared helper):
 - `investment_rate = invested / income`, `null` when income = 0
 - `net_worth_change = nw(latest snapshot ≤ end of M) − nw(latest snapshot < start of M)`;
   `null` if either is missing. Only computed for "All members" (snapshots are household-level).
-- `by_category` sums `expense` rows only; refunds are reported as one `refunds` total.
+- `by_category` nets refunds against their category: each `expense` adds and each `refund` subtracts,
+  so a fully refunded purchase drops out of the chart and the bars sum to `spending`. Categories at
+  or below zero are omitted. *(Changed 2026-09-29 at the user's request; originally refunds were a
+  separate total only.)*
+- Refund attribution (run by the matcher on every commit): a refund not edited by the user takes the
+  category of the purchase it reverses: an `expense` debit on the same account/card up to 90 days
+  earlier, preferably the same merchant key (ignoring REFUND/REVERSAL words) with an amount ≥ the
+  refund, otherwise the exact amount; closest date wins. A same-merchant match clears `needs_review`.
 - `excluded.total` = Σ amount of **debit** rows whose kind is `cc_payment` or `transfer` (money that
   left an account without counting as spending); `matched_count` / `unmatched_count` count those
   rows with / without `matched_txn_id`. Card-side payment credits are not added, so a matched pair

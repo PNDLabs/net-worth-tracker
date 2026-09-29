@@ -402,9 +402,11 @@ router.get('/summary', (req, res) => {
 
   const byCategory = new Map();
   for (const r of rows) {
-    if (r.kind !== 'expense') continue;
+    // Refunds cancel their purchase's category, so a fully refunded purchase drops out.
+    if (r.kind !== 'expense' && r.kind !== 'refund') continue;
     const c = r.category || 'Other';
-    byCategory.set(c, (byCategory.get(c) || 0) + signedAmount(r));
+    const amount = r.kind === 'expense' ? signedAmount(r) : -signedAmount(r);
+    byCategory.set(c, (byCategory.get(c) || 0) + amount);
   }
   // Money that left an account without counting as spending (the bank side of each pair).
   const excluded = rows.filter((r) => EXCLUDED_KINDS.includes(r.kind) && r.direction === 'debit');
@@ -416,7 +418,7 @@ router.get('/summary', (req, res) => {
     by_category: [...byCategory.entries()]
       .map(([category, amount]) => ({ category, amount: round2(amount) }))
       .filter((c) => c.amount > 0)
-      .sort((a, b) => b.amount - a.amount),
+      .sort((a, b) => b.amount - a.amount || a.category.localeCompare(b.category)),
     excluded: {
       total: round2(excluded.reduce((s, r) => s + r.amount, 0)),
       matched_count: excluded.filter((r) => r.matched_txn_id).length,
