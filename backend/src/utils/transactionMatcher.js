@@ -144,4 +144,4 @@ function runMatcher(conn, { from, to }) {
   return result;
 }
 
-module.exports = { runMatcher, attributeRefunds, CARD_PAYMENT_DAYS, TRANSFER_DAYS };
+module.exports = { runMatcher, attributeRefunds, CARD_PAYMENT_DAYS, TRANSFER_DAYS, REFUND_LOOKBACK_DAYS };

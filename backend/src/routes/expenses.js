@@ -26,7 +26,7 @@ const {
   KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, NATURAL_DIRECTION, merchantKey, applyPostProcessing, computeDedupeKeys, reconciliationNote,
 } = require('../utils/transactionClassifier');
 const { normalizeFamilyMember } = require('../utils/familyMember');
-const { runMatcher } = require('../utils/transactionMatcher');
+const { runMatcher, attributeRefunds, REFUND_LOOKBACK_DAYS } = require('../utils/transactionMatcher');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -493,6 +493,10 @@ router.put('/transactions/:id', (req, res) => {
     }
     if (remember && existing.merchant_key) {
       conn.prepare(UPSERT_RULE_SQL).run(existing.merchant_key, newKind, newCategory);
+    }
+    // Refunds of this purchase take its new category, so the pair keeps cancelling out.
+    if (newKind === 'expense') {
+      attributeRefunds(conn, { from: existing.txn_date, to: shiftDate(existing.txn_date, REFUND_LOOKBACK_DAYS) });
     }
   })();
 

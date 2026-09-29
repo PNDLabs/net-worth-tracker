@@ -1172,3 +1172,19 @@ describe('Refunds cancel their purchase', () => {
     expect(res.body.spending).toBe(813);
   });
 });
+
+describe('Refunds follow their purchase when it is recategorised', () => {
+  test('setting a purchase category moves its refund with it, so the pair still cancels', async () => {
+    const cardId = Number(testDb.prepare("INSERT INTO liabilities (name, type, current_balance) VALUES ('Card', 'credit_card', 0)").run().lastInsertRowid);
+    const s = insertStatement(testDb, { source_type: 'liability', source_id: cardId, statement_type: 'credit_card' });
+    const buy = insertTxn(testDb, s, { date: '2026-09-05', description: 'PAY*MAKEMYTRIP COM,GURGAON', amount: 5467, direction: 'debit', kind: 'expense' });
+    const refund = insertTxn(testDb, s, { date: '2026-09-05', description: 'PAY*MAKEMYTRIP COM,GURGAON', amount: 5467, direction: 'credit', kind: 'refund' });
+    insertTxn(testDb, s, { date: '2026-09-06', description: 'SWIGGY', amount: 300, direction: 'debit', kind: 'expense', category: 'Food & Dining' });
+
+    expect((await request(app).put(`/api/expenses/transactions/${buy}`).send({ category: 'Travel', remember: false })).status).toBe(200);
+
+    expect(testDb.prepare('SELECT category FROM transactions WHERE id = ?').get(refund).category).toBe('Travel');
+    const summary = (await request(app).get('/api/expenses/summary?month=2026-09')).body;
+    expect(summary.by_category).toEqual([{ category: 'Food & Dining', amount: 300 }]);
+  });
+});
