@@ -25,6 +25,26 @@ const CC_PAYMENT_BANK_RE = /CC\s*PAYMENT|CREDIT\s*CARD|CARD\s*PAYMENT|AUTOPAY.*\
 // Card-statement credit that is the bill payment arriving.
 const CC_PAYMENT_CARD_RE = /PAYMENT\s*RECEIVED|THANK\s*YOU|\bBBPS\b|PAYMENT\s*-\s/i;
 
+// Statement text that is not a transaction: summary boxes, limits, reward points, interest and
+// fee illustrations, and terms. Real fee rows (LATE PAYMENT FEE, FINANCE CHARGES, INTEREST CHARGED)
+// deliberately do not match.
+const STATEMENT_NOISE_RE = new RegExp([
+  'amount\\s*due', 'minimum\\s*(amount\\s*)?due', 'total\\s*dues?\\b', 'payment\\s*due', 'due\\s*date',
+  'credit\\s*limit', 'cash\\s*limit', 'available\\s*(credit|cash)', 'previous\\s*(statement\\s*)?balance',
+  'opening\\s*balance', 'closing\\s*balance', 'statement\\s*(date|period|summary)', 'account\\s*summary',
+  'reward\\s*points?', 'payments?\\s*/\\s*credits', 'purchases?\\s*/\\s*debits', 'illustration',
+  'for\\s*example', '\\be\\.g\\.', 'if\\s*you\\s*(purchase|pay|spend|make)', 'interest\\s*of\\b',
+  'will\\s*be\\s*charged', 'outstanding\\s*amount', 'balance\\s*up\\s*to',
+].join('|'), 'i');
+
+// Words that explain a card credit; any other card credit is a refund the user should check.
+const REFUND_WORDS_RE = /REFUND|REVERS|CASH\s*BACK|RETURN/i;
+
+/** True when a "transaction" is really statement summary, example or terms text. */
+function isStatementNoise(description) {
+  return STATEMENT_NOISE_RE.test(String(description || ''));
+}
+
 // Ordered keyword table – first match wins: [regex, kind, category, direction or null for either].
 const KEYWORD_RULES = [
   [/\bSALARY\b|\bSAL\b.*\bCR|PAYROLL/i, 'income', null, 'credit'],
@@ -132,11 +152,12 @@ function applyPostProcessing(txns, ctx) {
 
     const personalUpi = kind === 'expense' && /\bUPI\b/i.test(t.description) &&
       !KEYWORD_RULES.some(([re]) => re.test(t.description));
-    const needs_review = !rule && !hard && (
+    const unexplainedRefund = hard === 'refund' && !REFUND_WORDS_RE.test(t.description);
+    const needs_review = unexplainedRefund || (!rule && !hard && (
       (confidence != null && confidence < 0.7) ||
       (kind === 'expense' && (!category || category === 'Other')) ||
       personalUpi
-    );
+    ));
     return { ...t, merchant: t.merchant || null, merchant_key: key, kind, category, confidence, needs_review };
   });
 }
@@ -173,5 +194,5 @@ function reconciliationNote(statement, txns, statementType) {
 
 module.exports = {
   KINDS, EXCLUDED_KINDS, DEFAULT_CATEGORIES, NATURAL_DIRECTION,
-  merchantKey, mentionsLast4, keywordClassify, applyPostProcessing, computeDedupeKeys, reconciliationNote,
+  merchantKey, mentionsLast4, keywordClassify, isStatementNoise, applyPostProcessing, computeDedupeKeys, reconciliationNote,
 };

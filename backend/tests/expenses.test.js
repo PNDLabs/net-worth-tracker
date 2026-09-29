@@ -220,10 +220,10 @@ describe('transactionParser – pattern parsing', () => {
 
   test('detectStatementHeader – bank and card', () => {
     expect(tp.detectStatementHeader(fx.BANK_TEXT)).toEqual({
-      last4: '4821', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 50000, closing_balance: 124550,
+      last4: '4821', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 50000, closing_balance: 124550, statement_date: null,
     });
     expect(tp.detectStatementHeader(fx.CARD_TEXT)).toEqual({
-      last4: '1234', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 20000, closing_balance: 12300,
+      last4: '1234', period_start: '2026-08-01', period_end: '2026-08-31', opening_balance: 20000, closing_balance: 12300, statement_date: null,
     });
   });
 
@@ -1025,5 +1025,82 @@ describe('Final review fixes', () => {
     const r = await tp.parseTransactionsFromCsv(Buffer.from(csv), { statementType: 'bank' });
     expect(r.transactions).toHaveLength(1);
     expect(r.validation_notes).toEqual([expect.stringMatching(/^2 rows could not be read/)]);
+  });
+});
+
+// ─── Statement noise (summary boxes, illustrations, terms) ──────────────────
+
+describe('Statement noise is ignored', () => {
+  const tp = require('../src/utils/transactionParser');
+  const clf = require('../src/utils/transactionClassifier');
+  const real = [['2026-08-02', 'debit', 800], ['2026-08-06', 'credit', 20000], ['2026-08-12', 'credit', 1000]];
+  const rowsOf = (r) => r.transactions.map((t) => [t.date, t.direction, t.amount]);
+
+  test('pattern parsing keeps only the transaction rows of a noisy card page', async () => {
+    const r = await tp.parseTransactionsFromPages([fx.NOISY_CARD_TEXT], { statementType: 'credit_card' });
+    expect(rowsOf(r)).toEqual(real);
+    expect(r.validation_notes).toEqual([expect.stringMatching(/^Ignored \d+ lines? that looked like statement summary, examples or terms/)]);
+  });
+
+  test('a row ends at its own line, so text below it cannot change its amount', () => {
+    const txns = tp.parsePageWithPattern('12/08/2026 AMAZON REFUND 1,000.00 Cr\nIllustration: Rs 10,000.00 on 10/04/2026', 'credit_card', {});
+    expect(txns[0]).toMatchObject({ description: 'AMAZON REFUND', amount: 1000, direction: 'credit' });
+  });
+
+  test('summary and example rows returned by the AI are dropped too', async () => {
+    const aiTxn = (o) => ({ merchant: null, category: null, confidence: 0.9, ...o });
+    const rows = [
+      aiTxn({ date: '2026-08-31', description: 'Total Amount Due', amount: 12300, direction: 'credit', kind: 'refund' }),
+      aiTxn({ date: '2026-08-31', description: 'Minimum Amount Due', amount: 615, direction: 'credit', kind: 'refund' }),
+      aiTxn({ date: '2026-05-15', description: 'Interest charged on outstanding amount', amount: 342, direction: 'debit', kind: 'expense' }),
+      aiTxn({ date: '2026-08-02', description: 'SWIGGY BANGALORE', amount: 800, direction: 'debit', kind: 'expense', category: 'Food & Dining' }),
+    ];
+    fx.mockAi((sys) => (sys === tp.PROMPTS.extract('credit_card')
+      ? { statement: { period_start: '2026-08-01', period_end: '2026-08-31' }, transactions: rows }
+      : { transactions: rows, validation_notes: [] }));
+    const r = await tp.parseTransactionsFromPages(['PAGE'], { statementType: 'credit_card', apiKey: 'k' });
+    expect(rowsOf(r)).toEqual([['2026-08-02', 'debit', 800]]);
+    expect(r.validation_notes.some((n) => /Ignored 3 lines/.test(n))).toBe(true);
+  });
+
+  test('the AI prompts tell the model to skip summary boxes, examples and terms', () => {
+    for (const prompt of [tp.PROMPTS.extract('credit_card'), tp.PROMPTS.validate]) {
+      expect(prompt).toMatch(/Minimum Amount Due/);
+      expect(prompt).toMatch(/illustration/i);
+    }
+  });
+
+  test('the statement date gives a period when the header has none', () => {
+    expect(tp.detectStatementHeader(fx.NOISY_CARD_TEXT, 'credit_card')).toMatchObject({ statement_date: '2026-08-31' });
+  });
+
+  test('isStatementNoise keeps real fee and interest rows', () => {
+    for (const d of ['Total Amount Due', 'MINIMUM AMOUNT DUE', 'Available Credit Limit', 'Reward Points Summary',
+      'if you purchase goods worth', 'interest of Rs will be charged', 'Payment Due Date']) {
+      expect([d, clf.isStatementNoise(d)]).toEqual([d, true]);
+    }
+    for (const d of ['LATE PAYMENT FEE', 'FINANCE CHARGES', 'INTEREST CHARGED', 'PAYMENT RECEIVED - THANK YOU', 'GST ON FEES', 'AMAZON REFUND']) {
+      expect([d, clf.isStatementNoise(d)]).toEqual([d, false]);
+    }
+  });
+
+  test('an unexplained card credit is still a refund but is flagged for review', () => {
+    const [odd, refund] = clf.applyPostProcessing([
+      { date: '2026-08-10', description: 'ADJUSTMENT 4471', amount: 615, direction: 'credit', kind: 'refund', category: null, confidence: 0.9 },
+      { date: '2026-08-12', description: 'AMAZON REFUND', amount: 1000, direction: 'credit', kind: 'refund', category: 'Shopping', confidence: 0.9 },
+    ], { statementType: 'credit_card' });
+    expect(odd).toMatchObject({ kind: 'refund', needs_review: true });
+    expect(refund).toMatchObject({ kind: 'refund', needs_review: false });
+  });
+
+  test('previewing a noisy card PDF shows only the real transactions', async () => {
+    const cardId = (await request(app).post('/api/liabilities').send({ name: 'Card', type: 'credit_card', current_balance: 0 })).body.id;
+    const res = await request(app).post('/api/expenses/preview')
+      .field('source_type', 'liability').field('source_id', String(cardId))
+      .attach('file', fx.makePdf(fx.NOISY_CARD_LINES), 'card.pdf');
+    expect(res.status).toBe(200);
+    expect(res.body.transactions.map((t) => [t.date, t.kind, t.amount])).toEqual([
+      ['2026-08-02', 'expense', 800], ['2026-08-06', 'cc_payment', 20000], ['2026-08-12', 'refund', 1000],
+    ]);
   });
 });

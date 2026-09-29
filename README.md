@@ -180,7 +180,7 @@ cd backend
 npm test
 ```
 
-All tests should pass (203 at v1.10.0), covering accounts, holdings, assets, liabilities, insurance, metals, net worth, snapshots, imports, export, and the expenses module.
+All tests should pass (211 at v1.10.0), covering accounts, holdings, assets, liabilities, insurance, metals, net worth, snapshots, imports, export, and the expenses module.
 
 ## CSV Import Format
 

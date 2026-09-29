@@ -31,6 +31,27 @@ const CARD_LINES = [
   '20/08/2026 UBER INDIA 9,000.00',
 ];
 
+// A card page wrapped in the usual noise: summary box (column layout with the due date
+// after the amounts), limits, account summary, reward points, an interest illustration
+// with its own dates, and terms. Only the three rows under the table header are real.
+const NOISY_CARD_LINES = [
+  'HDFC Bank Credit Card Statement',
+  'Card No: 4893 XXXX XXXX 1234   Statement Date 31/08/2026',
+  'Total Amount Due   Minimum Amount Due   Payment Due Date',
+  '12,300.00   615.00   20/09/2026',
+  'Credit Limit 2,00,000.00 Available Credit Limit 1,87,700.00 Available Cash Limit 40,000.00',
+  'Account Summary',
+  'Previous Balance 20,000.00 Payments/Credits 21,000.00 Purchases/Debits 13,300.00 Finance Charges 0.00 Total Dues 12,300.00',
+  'Date Transaction Description Amount',
+  '02/08/2026 SWIGGY BANGALORE 800.00',
+  '06/08/2026 PAYMENT RECEIVED - THANK YOU 20,000.00 Cr',
+  '12/08/2026 AMAZON REFUND 1,000.00 Cr',
+  'Reward Points Summary Opening 1,200 Earned 150',
+  'Illustration of interest calculation: if you purchase goods worth Rs 10,000.00 on 10/04/2026 and pay the minimum amount due of Rs 500.00 on 15/05/2026,',
+  'interest of Rs 342.00 will be charged on 15/05/2026 on the outstanding amount of Rs 9,500.00',
+  'Late payment charges: Rs 100.00 for balance up to 500.00',
+];
+
 const BANK_CSV_ROWS = [
   '01/08/26,SALARY AUG ACME CORP,0001,01/08/26,,"1,00,000.00","1,50,000.00"',
   '03/08/26,UPI/412345678901/SWIGGY/swiggy@icici/Payment,0002,03/08/26,450.00,,"1,49,550.00"',
@@ -92,7 +113,8 @@ function mockAi(handler) {
 }
 
 module.exports = {
-  BANK_LINES, CARD_LINES,
+  BANK_LINES, CARD_LINES, NOISY_CARD_LINES,
+  NOISY_CARD_TEXT: NOISY_CARD_LINES.join('\n'),
   BANK_TEXT: BANK_LINES.join('\n'),
   CARD_TEXT: CARD_LINES.join('\n'),
   BANK_CSV, BANK_CSV_HEADER, BANK_CSV_ROWS, CARD_CSV,

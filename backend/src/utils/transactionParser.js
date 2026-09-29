@@ -16,7 +16,7 @@
  *   AI_MODEL (default gpt-4o-mini)
  */
 const { parse } = require('csv-parse/sync');
-const { KINDS, DEFAULT_CATEGORIES, keywordClassify } = require('./transactionClassifier');
+const { KINDS, DEFAULT_CATEGORIES, keywordClassify, isStatementNoise } = require('./transactionClassifier');
 
 // ─── Pattern parsing ──────────────────────────────────────────────────────────
 
@@ -91,6 +91,46 @@ function detectStatementHeader(text, statementType = 'bank') {
     period_end: period ? parseTxnDate(period[2]) : null,
     opening_balance: amountAfter('opening balance|previous balance|previous statement balance'),
     closing_balance: amountAfter('closing balance|total amount due|total dues'),
+    statement_date: parseTxnDate((t.match(new RegExp(`statement\\s*date\\s*:?\\s*(${DATE_TOKEN})`, 'i')) || [])[1]),
+  };
+}
+
+// Rows this far outside the statement period are examples or terms, not transactions.
+const PERIOD_GRACE_DAYS = 7;
+// A statement covers roughly a month before its statement date.
+const STATEMENT_DATE_LOOKBACK_DAYS = 40;
+
+function shiftIsoDate(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Drop rows that are statement noise (summary figures, limits, illustrations, terms) or
+ * dated well outside the statement period. Returns the kept rows and a note naming what was
+ * dropped, so nothing disappears silently.
+ */
+function dropStatementNoise(statement, transactions) {
+  let window = null;
+  if (statement.period_start && statement.period_end) {
+    window = [shiftIsoDate(statement.period_start, -PERIOD_GRACE_DAYS), shiftIsoDate(statement.period_end, PERIOD_GRACE_DAYS)];
+  } else if (statement.statement_date) {
+    window = [shiftIsoDate(statement.statement_date, -STATEMENT_DATE_LOOKBACK_DAYS), shiftIsoDate(statement.statement_date, PERIOD_GRACE_DAYS)];
+  }
+  const kept = [];
+  const dropped = [];
+  for (const t of transactions) {
+    const outside = window && (t.date < window[0] || t.date > window[1]);
+    (outside || isStatementNoise(t.description) ? dropped : kept).push(t);
+  }
+  if (dropped.length === 0) return { kept, note: null };
+  const shown = dropped.slice(0, 5).map((t) => `"${t.description.slice(0, 40)}" ${t.amount}`).join('; ');
+  const more = dropped.length > 5 ? `; and ${dropped.length - 5} more` : '';
+  return {
+    kept,
+    note: `Ignored ${dropped.length} ${dropped.length === 1 ? 'line' : 'lines'} that looked like statement summary, ` +
+      `examples or terms, or fell outside the statement period: ${shown}${more}.`,
   };
 }
 
@@ -117,6 +157,13 @@ function parsePageWithPattern(pageText, statementType, state = {}) {
     let body = text.slice(row.end, row.stop);
     const cut = body.search(ROW_END_RE);
     if (cut > 0) body = body.slice(0, cut);
+    // A row ends with the line holding its first amount; text below it (summary boxes,
+    // illustrations, terms) must not be read as part of this transaction.
+    const firstAmount = new RegExp(AMOUNT_RE.source).exec(body);
+    if (firstAmount) {
+      const eol = body.indexOf('\n', firstAmount.index + firstAmount[0].length);
+      if (eol > 0) body = body.slice(0, eol);
+    }
     const amounts = [...body.matchAll(AMOUNT_RE)];
     const date = parseTxnDate(row.date);
     if (!amounts.length || !date) continue;
@@ -187,7 +234,7 @@ Return ONLY a JSON object in EXACTLY this format – no markdown fences, no pros
 }
 
 Rules:
-- One entry per transaction row. Skip headers, opening/closing balance lines, totals and reward summaries.
+- One entry per posted transaction row. Skip everything else, even when it contains dates and amounts: headers, opening/closing balance lines, summary boxes (Total Amount Due, Minimum Amount Due, Payment Due Date, Total Dues, credit and cash limits, previous balance, payments/credits and purchases/debits totals), reward points, interest or fee illustrations and worked examples, and terms and conditions.
 - Dates are day-first: 05/08/2026 is 5 August 2026.
 - Amounts use the Indian format (1,00,000.00 = 100000). Remove currency symbols and commas. Amounts are always positive; "direction" carries the sign.
 - Direction: "Dr"/withdrawal = debit, "Cr"/deposit = credit. When only a running balance is shown, a rising balance means credit.
@@ -202,7 +249,7 @@ Cross-check every transaction against the raw text and return the corrected resu
 
 Rules:
 - Add transaction rows present in the raw text but missing from the extraction.
-- Remove rows that are not transactions (headers, balances, totals).
+- Remove rows that are not posted transactions: headers, balances, totals, summary figures (Total Amount Due, Minimum Amount Due, Payment Due Date, credit/cash limits), reward points, interest or fee illustrations and examples, and terms text.
 - Fix amounts that do not exactly match the text (Indian format 1,00,000.00 = 100000; watch for factor-of-10/100/1000 errors).
 - Fix debit/credit that contradicts Dr/Cr markers, withdrawal/deposit columns or the running balance.
 - Fix dates (day-first: 05/08/2026 = 5 August 2026).
@@ -400,8 +447,10 @@ async function parseTransactionsFromPages(pages, options = {}) {
     transactions.push(...pageTxns);
   }
 
-  fillPeriodFromTransactions(statement, transactions);
-  return { statement, transactions, method: usedPattern ? 'pattern' : 'ai', validation_notes };
+  const { kept, note } = dropStatementNoise(statement, transactions);
+  if (note) validation_notes.push(note);
+  fillPeriodFromTransactions(statement, kept);
+  return { statement, transactions: kept, method: usedPattern ? 'pattern' : 'ai', validation_notes };
 }
 
 // ─── CSV parsing ──────────────────────────────────────────────────────────────
@@ -572,8 +621,10 @@ async function parseTransactionsFromCsv(buffer, options = {}) {
     statement.closing_balance = ordered[ordered.length - 1].balance;
     statement.opening_balance = Math.round((first.direction === 'credit' ? first.balance - first.amount : first.balance + first.amount) * 100) / 100;
   }
-  fillPeriodFromTransactions(statement, transactions);
-  return { statement, transactions, method: classified ? 'ai' : 'pattern', validation_notes };
+  const { kept, note } = dropStatementNoise(statement, transactions);
+  if (note) validation_notes.push(note);
+  fillPeriodFromTransactions(statement, kept);
+  return { statement, transactions: kept, method: classified ? 'ai' : 'pattern', validation_notes };
 }
 
 module.exports = {
